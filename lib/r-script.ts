@@ -1,146 +1,244 @@
 import { WebR } from 'webr';
 
-// R script template for Mapper algorithm implementation
-const MAPPER_R_SCRIPT = `
-# Function to generate noisy circle data
-make_noisy_circle <- function(radius, num_points, noise_sd = 0.1) {
-  theta <- runif(num_points, 0, 2 * pi)
-  x <- radius * cos(theta) + rnorm(num_points, sd = noise_sd)
-  y <- radius * sin(theta) + rnorm(num_points, sd = noise_sd)
-  data.frame(x = x, y = y)
-}
+export const MAPPER_R_SCRIPT = (interval: number, overlap: number, clusteringMethod: string) => `
+library(jsonlite)
 
-# Generate Data
-set.seed(123)
-noisy_inner_circle <- make_noisy_circle(radius = 1, num_points = 200)
-noisy_outer_circle <- make_noisy_circle(radius = 2, num_points = 200)
-data <- rbind(
-  data.frame(circle = "inner", noisy_inner_circle),
-  data.frame(circle = "outer", noisy_outer_circle)
-)
+# -----------------------------------------------------------------------------
+# Configuration
+# -----------------------------------------------------------------------------
+# Load Iris dataset
+data(iris)
+iris_data <- iris[, 1:4]
+iris_labels <- iris$Species
 
-# Simple Mapper Implementation in R
-run_simple_mapper <- function(data, interval_count, percent_overlap) {
-  # 1. Filter: Projection to x-axis
-  filter_values <- data$x
+# -----------------------------------------------------------------------------
+# Simple Mapper Implementation (Self-contained)
+# -----------------------------------------------------------------------------
+run_simple_mapper <- function(data, labels, interval_count, percent_overlap, clustering_method) {
+  # 1. Filter: PCA (First principal component)
+    pca <- prcomp(data, scale. = TRUE)
+    filter_values <- pca$x[, 1]
   
-  # 2. Cover: Create intervals
-  min_val <- min(filter_values)
-  max_val <- max(filter_values)
-  range_val <- max_val - min_val
+  # 2. Cover: Create overlapping intervals
+    min_val <- min(filter_values)
+    max_val <- max(filter_values)
+    range_val <- max_val - min_val
+    if (range_val == 0) range_val <- 1
+
+    interval_length <- range_val / (interval_count - (interval_count - 1) * percent_overlap / 100)
+    step_size <- interval_length * (1 - percent_overlap / 100)
+
+    intervals <- list()
+    for (i in 0:(interval_count - 1)) {
+      start <- min_val + i * step_size
+      end <- start + interval_length
+      intervals[[i + 1]] <- list(start = start, end = end, indices = which(filter_values >= start & filter_values <= end))
+    }
   
-  interval_length <- range_val / (interval_count - (interval_count - 1) * percent_overlap/100)
-  step_size <- interval_length * (1 - percent_overlap/100)
-  
-  intervals <- list()
-  for (i in 0:(interval_count-1)) {
-    start <- min_val + i * step_size
-    end <- start + interval_length
-    intervals[[i+1]] <- list(start=start, end=end, indices=which(filter_values >= start & filter_values <= end))
-  }
-  
-  # 3. Cluster: Clustering within each interval
-  nodes <- list()
-  node_id_counter <- 0
-  
-  for (i in 1:length(intervals)) {
-    indices <- intervals[[i]]$indices
-    if (length(indices) > 0) {
-      subset_data <- data[indices, c("x", "y")]
-      
-      # Use hierarchical clustering
-      if (nrow(subset_data) > 2) {
-        dist_mat <- dist(subset_data)
-        hc <- hclust(dist_mat)
-        clusters <- cutree(hc, h = 0.5) 
-        
-        for (cid in unique(clusters)) {
+  # 3. Cluster: Cluster data points within each interval
+    nodes <- list()
+    node_id_counter <- 0
+
+    for (i in 1:length(intervals)) {
+      indices <- intervals[[i]]$indices
+      if (length(indices) > 0) {
+        subset_data <- data[indices, ]
+
+        clusters <- NULL
+        if (nrow(subset_data) <= 2) {
+          clusters <- rep(1, nrow(subset_data))
+        } else {
+          if (clustering_method == "kmeans") {
+             # Simple k-means with heuristic k
+            k <- min(nrow(subset_data), 2)
+            km <- kmeans(subset_data, centers = k)
+            clusters <- km$cluster
+          } else if (clustering_method == "dbscan") {
+             # Proxy for DBSCAN using hclust
+             dist_mat <- dist(subset_data)
+            hc <- hclust(dist_mat, method = "single")
+            cut_height <- mean(dist_mat) * 0.8
+            clusters <- cutree(hc, h = cut_height)
+          } else {
+             # Default: Agglomerative Clustering
+            dist_mat <- dist(subset_data)
+            hc <- hclust(dist_mat, method = "complete")
+            k <- min(nrow(subset_data), 2)
+            clusters <- cutree(hc, k = k)
+          }
+        }
+
+        if (!is.null(clusters)) {
+          for (cid in unique(clusters)) {
             node_indices <- indices[clusters == cid]
             node_id_counter <- node_id_counter + 1
+            
+            # Determine dominant species
+            node_labels <- labels[node_indices]
+            dominant_species <- names(sort(table(node_labels), decreasing = TRUE))[1]
+
             nodes[[node_id_counter]] <- list(
-                id = paste0("node_", node_id_counter),
-                level = i,
-                indices = node_indices,
-                size = length(node_indices)
+              id = paste0("node_", node_id_counter),
+              level = i,
+              indices = node_indices,
+              size = length(node_indices),
+              species = dominant_species
             )
+          }
         }
       }
     }
-  }
   
-  # 4. Graph: Connect nodes if they share data points
-  links <- list()
-  if (length(nodes) > 1) {
-    for (i in 1:(length(nodes)-1)) {
-      for (j in (i+1):length(nodes)) {
+  # 4. Adjacency Matrix
+  num_nodes <- length(nodes)
+  adjacency <- matrix(0, nrow = num_nodes, ncol = num_nodes)
+  
+  if (num_nodes > 1) {
+    for (i in 1:(num_nodes-1)) {
+      for (j in (i+1):num_nodes) {
         if (abs(nodes[[i]]$level - nodes[[j]]$level) <= 1) {
             intersection <- intersect(nodes[[i]]$indices, nodes[[j]]$indices)
             if (length(intersection) > 0) {
-                links[[length(links)+1]] <- list(
-                    source = nodes[[i]]$id,
-                    target = nodes[[j]]$id,
-                    weight = length(intersection)
-                )
+                adjacency[i, j] <- 1
+                adjacency[j, i] <- 1
             }
         }
       }
     }
   }
   
-  return(list(nodes = nodes, links = links))
+  # Convert nodes list to TDAmapper format vectors
+  level_of_vertex <- numeric(num_nodes)
+  points_in_vertex <- list()
+  
+  for (k in 1:num_nodes) {
+      level_of_vertex[k] <- nodes[[k]]$level
+      points_in_vertex[[k]] <- nodes[[k]]$indices
+  }
+
+  # Combine data with labels for export
+  original_data_with_labels <- data
+  original_data_with_labels$Species <- labels
+  
+  # Return TDAmapper-like structure + original data
+  return(list(
+      adjacency = adjacency,
+      num_vertices = num_nodes,
+      level_of_vertex = level_of_vertex,
+      points_in_vertex = points_in_vertex,
+      original_data = original_data_with_labels
+  ))
 }
 
 # Run Mapper
-result <- run_simple_mapper(data, interval_count = INTERVAL_PARAM, percent_overlap = OVERLAP_PARAM)
+result <- run_simple_mapper(iris_data, iris_labels, ${interval}, ${overlap}, "${clusteringMethod}")
 
 # Convert to JSON
-library(jsonlite)
 toJSON(result, auto_unbox = TRUE)
 `;
 
-export async function runMapperAlgo(webR: WebR, interval: number, overlap: number) {
-  if (!webR) throw new Error('WebR not initialized');
-
-  // Inject parameters
-  const script = MAPPER_R_SCRIPT
-    .replace('INTERVAL_PARAM', interval.toString())
-    .replace('OVERLAP_PARAM', overlap.toString());
-
-  console.log('Running R Script...');
+export async function runMapperAlgo(webR: any, interval: number, overlap: number, clusteringMethod: string): Promise<any> {
+  // await webR.init(); // Removed redundant init
+  const script = MAPPER_R_SCRIPT(interval, overlap, clusteringMethod);
+  console.log(`Running R Script with Iris Data(Method: ${clusteringMethod})...`);
 
   // Evaluate the R code
   const result = await webR.evalR(script);
 
   // Parse the JSON output
-  const jsonString = await result.toString();
+  const output = await result.toJs();
+  const jsonString = Array.isArray(output) ? output[0] : output;
   const parsedData = JSON.parse(jsonString);
 
-  // Transform to GraphData format
-  const nodes = parsedData.nodes.map((n: any) => ({
-    id: n.id,
-    group: n.level,
-    val: Math.sqrt(n.size) * 2,
-    name: n.id,
-    desc: `Level ${n.level}, Points: ${n.size}`
-  }));
+  // Transform TDAmapper format to GraphData
+  // parsedData has: adjacency, num_vertices, level_of_vertex, points_in_vertex, original_data
 
-  const links = parsedData.links.map((l: any) => ({
-    source: l.source,
-    target: l.target,
-    value: 1,
-    isReverse: false
-  }));
+  const numVertices = parsedData.num_vertices;
+  const nodes: any[] = [];
 
-  // Add reverse links for bidirectional flow
-  const reverseLinks = links.map((l: any) => ({
-    source: l.target,
-    target: l.source,
-    value: 1,
+  // Helper to find dominant species for a node
+  // We need to look up the original data using indices
+  const originalData = parsedData.original_data; // Array of objects or columns
+
+  // Check if originalData is array of objects or column-based
+  const getSpecies = (indices: number[]) => {
+    if (!indices || indices.length === 0) return "unknown";
+
+    const speciesCounts: Record<string, number> = {};
+    indices.forEach(idx => {
+      // R indices are 1-based, JS 0-based? 
+      // Usually R -> JSON preserves values. If R indices are 1..N, we might need to adjust if we access JS array.
+      // But here we just need the species label.
+      // Let's assume originalData is an array of objects (jsonlite default for data.frame)
+      // AND that indices are 1-based from R.
+
+      let species = "unknown";
+      if (Array.isArray(originalData)) {
+        // 0-based access, so idx-1
+        const row = originalData[idx - 1];
+        if (row) species = row.Species;
+      } else if (originalData.Species) {
+        // Column based
+        species = originalData.Species[idx - 1];
+      }
+
+      speciesCounts[species] = (speciesCounts[species] || 0) + 1;
+    });
+
+    // Find max
+    return Object.entries(speciesCounts).reduce((a, b) => a[1] > b[1] ? a : b)[0];
+  };
+
+  for (let i = 0; i < numVertices; i++) {
+    // R lists are 1-based, but JSON array is 0-based
+    const indices = parsedData.points_in_vertex[i];
+    const level = parsedData.level_of_vertex[i];
+    const size = indices.length;
+    const id = `node_${i + 1} `; // Match R naming convention if needed, or just use index
+    const species = getSpecies(indices);
+
+    nodes.push({
+      id: id,
+      group: level,
+      val: size,
+      name: id,
+      desc: `Cluster ${id} (Size: ${size}, Species: ${species})`,
+      species: species,
+      indices: indices
+    });
+  }
+
+  const links: any[] = [];
+  const adjacency = parsedData.adjacency;
+
+  if (Array.isArray(adjacency)) {
+    for (let i = 0; i < numVertices; i++) {
+      for (let j = i + 1; j < numVertices; j++) {
+        // Check if connected
+        if (adjacency[i] && adjacency[i][j] === 1) {
+          links.push({
+            source: nodes[i].id,
+            target: nodes[j].id,
+            value: 1
+          });
+        }
+      }
+    }
+  }
+
+  // Create reverse links for bidirectional flow
+  const reverseLinks = links.map(link => ({
+    source: link.target,
+    target: link.source,
+    value: link.value,
     isReverse: true
   }));
 
   return {
     nodes,
-    links: [...links, ...reverseLinks]
+    links: [...links, ...reverseLinks],
+    originalData: parsedData.original_data,
+    rawNodes: nodes, // We reconstructed nodes, so this is fine
+    adjacency: parsedData.adjacency
   };
 }
