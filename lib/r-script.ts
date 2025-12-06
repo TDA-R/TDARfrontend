@@ -147,8 +147,47 @@ export async function runMapperAlgo(webR: any, interval: number, overlap: number
 
   // Parse the JSON output
   const output = await result.toJs();
-  const jsonString = Array.isArray(output) ? output[0] : output;
-  const parsedData = JSON.parse(jsonString);
+  console.log("WebR Raw Output Type:", typeof output);
+  console.log("WebR Raw Output:", output);
+
+  let parsedData;
+
+  if (typeof output === 'string') {
+    // It's a single string
+    parsedData = JSON.parse(output);
+  } else if (output && typeof output === 'object' && 'values' in output && Array.isArray(output.values)) {
+    // WebR character vector object: { type: 'character', values: [...] }
+    const jsonStr = output.values[0];
+    if (typeof jsonStr === 'string') {
+      parsedData = JSON.parse(jsonStr);
+    } else {
+      parsedData = jsonStr;
+    }
+  } else if (Array.isArray(output)) {
+    if (output.length === 0) {
+      throw new Error("WebR returned empty array");
+    }
+    const firstItem = output[0];
+    if (typeof firstItem === 'string') {
+      // It's an array of strings (standard R character vector)
+      parsedData = JSON.parse(firstItem);
+    } else if (typeof firstItem === 'object') {
+      // It's already an object (maybe WebR auto-converted?)
+      parsedData = firstItem;
+    } else {
+      parsedData = firstItem;
+    }
+  } else if (typeof output === 'object') {
+    // It's already an object
+    parsedData = output;
+  } else {
+    throw new Error(`Unexpected WebR output type: ${typeof output}`);
+  }
+
+  console.log("Parsed R Output:", Object.keys(parsedData));
+  if (parsedData.original_data) {
+    console.log("Original Data Sample:", Array.isArray(parsedData.original_data) ? parsedData.original_data[0] : "Not an array");
+  }
 
   // Transform TDAmapper format to GraphData
   // parsedData has: adjacency, num_vertices, level_of_vertex, points_in_vertex, original_data
@@ -191,10 +230,13 @@ export async function runMapperAlgo(webR: any, interval: number, overlap: number
 
   for (let i = 0; i < numVertices; i++) {
     // R lists are 1-based, but JSON array is 0-based
-    const indices = parsedData.points_in_vertex[i];
+    const rawIndices = parsedData.points_in_vertex[i];
+    // Handle auto_unbox: if single item, it might be a number, not an array
+    const indices = Array.isArray(rawIndices) ? rawIndices : [rawIndices];
+
     const level = parsedData.level_of_vertex[i];
     const size = indices.length;
-    const id = `node_${i + 1} `; // Match R naming convention if needed, or just use index
+    const id = `node_${i + 1}`; // Removed trailing space
     const species = getSpecies(indices);
 
     nodes.push({

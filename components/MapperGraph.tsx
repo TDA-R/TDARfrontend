@@ -560,7 +560,7 @@ export function MapperGraph({ interval, overlap, clusteringMethod }: MapperGraph
                         <h4 className="text-zinc-100 font-bold mb-2.5 text-xs">Legend</h4>
                         {columns.find(c => c.name === selectedColumn)?.type === 'numerical' && columnStats ? (
                             <div className="flex flex-col gap-1">
-                                <div className="h-3 w-full rounded bg-gradient-to-r from-[hsl(240,70%,50%)] to-[hsl(0,70%,50%)]"></div>
+                                <div className="h-3 w-full rounded" style={{ background: 'linear-gradient(to right, hsl(240, 70%, 50%), hsl(180, 70%, 50%), hsl(120, 70%, 50%), hsl(60, 70%, 50%), hsl(0, 70%, 50%))' }}></div>
                                 <div className="flex justify-between text-[10px] text-zinc-500 font-mono">
                                     <span>{columnStats.min.toFixed(2)}</span>
                                     <span>{columnStats.max.toFixed(2)}</span>
