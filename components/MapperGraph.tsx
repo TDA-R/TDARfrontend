@@ -350,7 +350,7 @@ export function MapperGraph({ interval, overlap, clusteringMethod }: MapperGraph
         } else if (typeof data.originalData === 'object' && Object.keys(data.originalData).length > 0) {
             // Handle column-based format (list of vectors)
             const columns = Object.keys(data.originalData);
-            const rowCount = data.originalData[columns[0]].length;
+            const rowCount = (data.originalData as any)[columns[0]].length;
             const headers = columns;
             const rows = [];
             for (let i = 0; i < rowCount; i++) {
