@@ -354,7 +354,7 @@ export function MapperGraph({ interval, overlap, clusteringMethod }: MapperGraph
             const headers = columns;
             const rows = [];
             for (let i = 0; i < rowCount; i++) {
-                const row = columns.map(col => `"${data.originalData[col][i]}"`);
+                const row = columns.map(col => `"${(data.originalData as any)[col][i]}"`);
                 rows.push(row.join(","));
             }
             csvContent = [headers.join(","), ...rows].join("\n");
@@ -585,7 +585,7 @@ export function MapperGraph({ interval, overlap, clusteringMethod }: MapperGraph
                 ref={fgRef}
                 graphData={data}
                 nodeLabel="desc"
-                nodeColor={node => nodeColors[node.id] || (node as any).color || '#888'}
+                nodeColor={node => nodeColors[node.id!] || (node as any).color || '#888'}
                 nodeRelSize={6}
                 nodeResolution={8} // Reduced resolution for potentially better performance
                 nodeOpacity={0.9}

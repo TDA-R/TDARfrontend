@@ -15,7 +15,7 @@ const WebRContext = createContext<WebRContextType>({
 });
 
 export function WebRProvider({ children }: { children: React.ReactNode }) {
-    const [webR, setWebR] = useState<WebR | null>(null);
+    const [webR, setWebR] = useState<any | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
