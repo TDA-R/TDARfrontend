@@ -1,4 +1,20 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# TDA-R Mapper
+
+![TDA-R Mapper Preview](public/example.png)
+
+## Introduction
+
+**TDA-R Mapper** is an advanced web application designed for **Topological Data Analysis (TDA)** visualization. By integrating **WebR**, it executes the R-based `MapperAlgo` algorithm directly within your browser, enabling powerful, server-less exploration of high-dimensional data structures.
+
+This tool allows researchers and data scientists to visualize the shape of their data, identify clusters, and understand complex relationships through an interactive 3D network graph.
+
+### Key Features
+
+*   **Serverless R Backend**: Powered by WebR to run statistical computations entirely on the client side.
+*   **Interactive 3D Graph**: Navigate, zoom, and inspect topological networks in a rich 3D environment.
+*   **Custom Data Upload**: Support for uploading custom JSON datasets for immediate analysis.
+*   **eal-time Tuning**: Instantly adjust Mapper parameters like Interval, Overlap, and Clustering methods (DBSCAN, K-Means, Hierarchical).
+*   **Visualization**: Automatic column detection for adaptive node coloring and statistical insights.
 
 ## Getting Started
 
@@ -18,21 +34,14 @@ bun dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
 ## Learn More
 
-To learn more about Next.js, take a look at the following resources:
+To learn more about the technologies used:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- [Next.js](https://nextjs.org)
+- [WebR](https://docs.r-wasm.org/webr/latest/)
+- [React Force Graph](https://github.com/vasturiano/react-force-graph)
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## License
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Created by [Kenny Wang](https://kennywang112.github.io/Profile/). Powered by [TDA-R Organization](https://github.com/TDA-R).

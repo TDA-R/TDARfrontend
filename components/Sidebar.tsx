@@ -23,7 +23,7 @@ export function Sidebar({
         <div className="w-80 bg-zinc-900 border-r border-zinc-800 text-zinc-100 flex flex-col h-full p-6 space-y-8">
             <div className="flex items-center space-x-3 mb-4">
                 <Activity className="w-6 h-6 text-indigo-500" />
-                <h1 className="text-xl font-bold tracking-tight">TDA Mapper</h1>
+                <h1 className="text-xl font-bold tracking-tight">TDA-R Mapper</h1>
             </div>
 
             <div className="space-y-6">

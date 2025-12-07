@@ -2,145 +2,104 @@ import { WebR } from 'webr';
 
 export const MAPPER_R_SCRIPT = (interval: number, overlap: number, clusteringMethod: string) => `
 library(jsonlite)
+# library(MapperAlgo) # Loaded via source in WebRProvider
 
 # -----------------------------------------------------------------------------
 # Configuration
 # -----------------------------------------------------------------------------
-# Load Iris dataset
-data(iris)
-iris_data <- iris[, 1:4]
-iris_labels <- iris$Species
-
-# -----------------------------------------------------------------------------
-# Simple Mapper Implementation (Self-contained)
-# -----------------------------------------------------------------------------
-run_simple_mapper <- function(data, labels, interval_count, percent_overlap, clustering_method) {
-  # 1. Filter: PCA (First principal component)
-    pca <- prcomp(data, scale. = TRUE)
-    filter_values <- pca$x[, 1]
-  
-  # 2. Cover: Create overlapping intervals
-    min_val <- min(filter_values)
-    max_val <- max(filter_values)
-    range_val <- max_val - min_val
-    if (range_val == 0) range_val <- 1
-
-    interval_length <- range_val / (interval_count - (interval_count - 1) * percent_overlap / 100)
-    step_size <- interval_length * (1 - percent_overlap / 100)
-
-    intervals <- list()
-    for (i in 0:(interval_count - 1)) {
-      start <- min_val + i * step_size
-      end <- start + interval_length
-      intervals[[i + 1]] <- list(start = start, end = end, indices = which(filter_values >= start & filter_values <= end))
-    }
-  
-  # 3. Cluster: Cluster data points within each interval
-    nodes <- list()
-    node_id_counter <- 0
-
-    for (i in 1:length(intervals)) {
-      indices <- intervals[[i]]$indices
-      if (length(indices) > 0) {
-        subset_data <- data[indices, ]
-
-        clusters <- NULL
-        if (nrow(subset_data) <= 2) {
-          clusters <- rep(1, nrow(subset_data))
-        } else {
-          if (clustering_method == "kmeans") {
-             # Simple k-means with heuristic k
-            k <- min(nrow(subset_data), 2)
-            km <- kmeans(subset_data, centers = k)
-            clusters <- km$cluster
-          } else if (clustering_method == "dbscan") {
-             # Proxy for DBSCAN using hclust
-             dist_mat <- dist(subset_data)
-            hc <- hclust(dist_mat, method = "single")
-            cut_height <- mean(dist_mat) * 0.8
-            clusters <- cutree(hc, h = cut_height)
-          } else {
-             # Default: Agglomerative Clustering
-            dist_mat <- dist(subset_data)
-            hc <- hclust(dist_mat, method = "complete")
-            k <- min(nrow(subset_data), 2)
-            clusters <- cutree(hc, k = k)
-          }
-        }
-
-        if (!is.null(clusters)) {
-          for (cid in unique(clusters)) {
-            node_indices <- indices[clusters == cid]
-            node_id_counter <- node_id_counter + 1
-            
-            # Determine dominant species
-            node_labels <- labels[node_indices]
-            dominant_species <- names(sort(table(node_labels), decreasing = TRUE))[1]
-
-            nodes[[node_id_counter]] <- list(
-              id = paste0("node_", node_id_counter),
-              level = i,
-              indices = node_indices,
-              size = length(node_indices),
-              species = dominant_species
-            )
-          }
-        }
-      }
-    }
-  
-  # 4. Adjacency Matrix
-  num_nodes <- length(nodes)
-  adjacency <- matrix(0, nrow = num_nodes, ncol = num_nodes)
-  
-  if (num_nodes > 1) {
-    for (i in 1:(num_nodes-1)) {
-      for (j in (i+1):num_nodes) {
-        if (abs(nodes[[i]]$level - nodes[[j]]$level) <= 1) {
-            intersection <- intersect(nodes[[i]]$indices, nodes[[j]]$indices)
-            if (length(intersection) > 0) {
-                adjacency[i, j] <- 1
-                adjacency[j, i] <- 1
-            }
-        }
-      }
-    }
+# Load Data
+if (file.exists('/input.json')) {
+  input_data <- fromJSON('/input.json')
+  # Check if it's a list (JSON array of objects) or matrix
+  if (is.list(input_data) && !is.data.frame(input_data)) {
+     # Try to convert to data frame
+     input_data <- as.data.frame(input_data)
   }
   
-  # Convert nodes list to TDAmapper format vectors
-  level_of_vertex <- numeric(num_nodes)
-  points_in_vertex <- list()
+  # Select numeric columns for Mapper
+  nums <- unlist(lapply(input_data, is.numeric))
+  filter_values <- input_data[, nums, drop = FALSE]
   
-  for (k in 1:num_nodes) {
-      level_of_vertex[k] <- nodes[[k]]$level
-      points_in_vertex[[k]] <- nodes[[k]]$indices
+  # If no numeric columns, try to use all (maybe they are strings but convertible?)
+  if (ncol(filter_values) == 0) {
+     filter_values <- input_data
   }
-
-  # Combine data with labels for export
-  original_data_with_labels <- data
-  original_data_with_labels$Species <- labels
   
-  # Return TDAmapper-like structure + original data
-  return(list(
-      adjacency = adjacency,
-      num_vertices = num_nodes,
-      level_of_vertex = level_of_vertex,
-      points_in_vertex = points_in_vertex,
-      original_data = original_data_with_labels
-  ))
+  original_data <- input_data
+} else {
+  data(iris)
+  filter_values <- iris[, 1:4]
+  original_data <- iris
 }
 
-# Run Mapper
-result <- run_simple_mapper(iris_data, iris_labels, ${interval}, ${overlap}, "${clusteringMethod}")
+# -----------------------------------------------------------------------------
+# Run MapperAlgo
+# -----------------------------------------------------------------------------
+
+# Define method params based on method
+method_params <- list()
+if ("${clusteringMethod}" == "dbscan") {
+    method_params <- list(eps = 0.5, minPts = 5) # Default/Heuristic
+} else if ("${clusteringMethod}" == "kmeans") {
+    method_params <- list(max_kmeans_clusters = 3)
+} else {
+    # hierarchical
+    method_params <- list(num_bins_when_clustering = 10, method = 'ward.D2')
+}
+
+Mapper <- MapperAlgo(
+    filter_values = filter_values,
+    percent_overlap = ${overlap},
+    methods = "${clusteringMethod}",
+    method_params = method_params,
+    cover_type = 'stride',
+    intervals = ${interval}, # Use intervals count from UI
+    num_cores = 1 # WebR is single threaded usually
+)
+
+# -----------------------------------------------------------------------------
+# Prepare Output
+# -----------------------------------------------------------------------------
+# We need to ensure the output matches what the frontend expects:
+# adjacency, num_vertices, level_of_vertex, points_in_vertex, original_data
+
+export_data <- list(
+  adjacency = Mapper$adjacency,
+  num_vertices = Mapper$num_vertices,
+  level_of_vertex = Mapper$level_of_vertex,
+  points_in_vertex = Mapper$points_in_vertex,
+  original_data = original_data # Include original data for coloring
+)
 
 # Convert to JSON
-toJSON(result, auto_unbox = TRUE)
+toJSON(export_data, auto_unbox = TRUE)
 `;
 
-export async function runMapperAlgo(webR: any, interval: number, overlap: number, clusteringMethod: string): Promise<any> {
-  // await webR.init(); // Removed redundant init
+export async function runMapperAlgo(
+  webR: any,
+  interval: number,
+  overlap: number,
+  clusteringMethod: string,
+  customData?: any[] | null
+): Promise<any> {
+
+  // Handle Custom Data
+  if (customData && customData.length > 0) {
+    console.log("Writing custom data to /input.json...", customData.length, "rows");
+    await webR.FS.writeFile('/input.json', JSON.stringify(customData));
+  } else {
+    console.log("No custom data provided, using Iris default.");
+    try {
+      // Remove input.json if it exists to force Iris usage
+      await webR.FS.unlink('/input.json');
+    } catch (e) {
+      // Ignore if file doesn't exist
+    }
+  }
+
   const script = MAPPER_R_SCRIPT(interval, overlap, clusteringMethod);
-  console.log(`Running R Script with Iris Data(Method: ${clusteringMethod})...`);
+  console.log(`Running R Script (Method: ${clusteringMethod})...`);
+
 
   // Evaluate the R code
   const result = await webR.evalR(script);

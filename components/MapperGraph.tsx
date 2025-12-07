@@ -40,12 +40,15 @@ interface MapperGraphProps {
     interval: number;
     overlap: number;
     clusteringMethod: string;
+    sourceData: any[] | null;
+    onDataUpload: (data: any[]) => void;
 }
 
-export function MapperGraph({ interval, overlap, clusteringMethod }: MapperGraphProps) {
+export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, onDataUpload }: MapperGraphProps) {
     const { webR, isLoading: isWebRLoading } = useWebR();
     const [data, setData] = useState<GraphData>({ nodes: [], links: [] });
     const [isComputing, setIsComputing] = useState(false);
+    const computationIdRef = useRef(0);
     const fgRef = useRef<any>(null);
 
     // Dynamic Coloring State
@@ -56,28 +59,67 @@ export function MapperGraph({ interval, overlap, clusteringMethod }: MapperGraph
 
     // Run Mapper Algorithm using WebR
     useEffect(() => {
+        // Only run if webR is ready
         if (!webR || isWebRLoading) return;
 
+        const reqId = ++computationIdRef.current;
+
         const computeGraph = async () => {
+            if (computationIdRef.current !== reqId) return;
+
             setIsComputing(true);
             console.log("Starting Mapper computation...");
             try {
-                const graphData = await runMapperAlgo(webR, interval, overlap, clusteringMethod);
+                // Pass sourceData to runMapperAlgo
+                const graphData = await runMapperAlgo(webR, interval, overlap, clusteringMethod, sourceData);
+
+                if (computationIdRef.current !== reqId) return;
+
                 console.log("Mapper computation result:", graphData);
                 if (graphData) {
                     setData(graphData);
+
+                    // Also analyze original data if present in graphData (for default/initial load)
+                    if (graphData.originalData) {
+                        analyzeData(graphData.originalData);
+                    }
                 }
             } catch (error) {
+                if (computationIdRef.current !== reqId) return;
                 console.error("Error running Mapper:", error);
             } finally {
-                setIsComputing(false);
+                if (computationIdRef.current === reqId) {
+                    setIsComputing(false);
+                }
             }
         };
 
         // Debounce to avoid too many R calls
         const timer = setTimeout(computeGraph, 500);
         return () => clearTimeout(timer);
-    }, [webR, isWebRLoading, interval, overlap, clusteringMethod]);
+    }, [webR, isWebRLoading, interval, overlap, clusteringMethod, sourceData]); // Add sourceData dependency
+
+    const analyzeData = (data: any[]) => {
+        if (!data || data.length === 0) return;
+
+        // Detect columns
+        const firstRow = data[0];
+        if (typeof firstRow !== 'object') return;
+
+        const cols = Object.keys(firstRow).map(key => {
+            const val = firstRow[key];
+            const isNum = typeof val === 'number';
+            return { name: key, type: isNum ? 'numerical' : 'categorical' } as const;
+        });
+
+        setColumns(cols);
+
+        // Default to first numerical column or first column if not set
+        if (!selectedColumn) {
+            const defaultCol = cols.find(c => c.type === 'numerical')?.name || cols[0]?.name;
+            if (defaultCol) setSelectedColumn(defaultCol);
+        }
+    };
 
     const handleNodeDragEnd = useCallback((node: any) => {
         // Lock the node position after dragging
@@ -369,77 +411,67 @@ export function MapperGraph({ interval, overlap, clusteringMethod }: MapperGraph
 
         const reader = new FileReader();
         reader.onload = (e) => {
+            const text = e.target?.result as string;
             try {
-                const json = JSON.parse(e.target?.result as string);
-                console.log("Uploaded JSON:", json);
+                const parsedData = JSON.parse(text);
 
-                // Validate structure (TDAmapper style)
-                if (!json.adjacency || !json.points_in_vertex || !json.level_of_vertex) {
-                    alert("Invalid file format. Expected TDAmapper JSON structure (adjacency, points_in_vertex, level_of_vertex).");
-                    return;
-                }
+                // Check if it's a Mapper Output (has adjacency)
+                if (parsedData.adjacency && parsedData.level_of_vertex) {
+                    console.log("Detected Mapper Output JSON. Visualizing directly...");
 
-                const numVertices = json.num_vertices || json.level_of_vertex.length;
-                const nodes: any[] = [];
-                const originalData = json.original_data;
-                console.log("Original Data Type:", Array.isArray(originalData) ? "Array" : typeof originalData);
-                if (Array.isArray(originalData)) console.log("Rows:", originalData.length);
-                else if (originalData) console.log("Keys:", Object.keys(originalData));
+                    // Stop any ongoing computation
+                    computationIdRef.current++;
+                    setIsComputing(false);
 
-                // Helper to find dominant species
-                const getSpecies = (indices: number[]) => {
-                    if (!indices || indices.length === 0 || !originalData) return "unknown";
+                    const numVertices = parsedData.num_vertices || parsedData.level_of_vertex.length;
+                    const nodes: any[] = [];
 
-                    const speciesCounts: Record<string, number> = {};
-                    indices.forEach(idx => {
-                        let species = "unknown";
-                        // Handle 1-based indices from R if needed (usually R indices are 1-based)
-                        // We'll try idx-1 first if originalData is array
-                        if (Array.isArray(originalData)) {
-                            const row = originalData[idx - 1];
-                            if (row) species = (row as any).Species || (row as any).species || "unknown";
-                        } else if ((originalData as any).Species) {
-                            species = (originalData as any).Species[idx - 1];
-                        }
-                        speciesCounts[species] = (speciesCounts[species] || 0) + 1;
-                    });
+                    // Helper to find dominant species (if original_data exists)
+                    const getSpecies = (indices: number[]) => {
+                        if (!indices || indices.length === 0 || !parsedData.original_data) return "unknown";
 
-                    // Find max
-                    const entries = Object.entries(speciesCounts);
-                    if (entries.length === 0) return "unknown";
-                    return entries.reduce((a, b) => a[1] > b[1] ? a : b)[0];
-                };
+                        const originalData = parsedData.original_data;
+                        const speciesCounts: Record<string, number> = {};
 
-                for (let i = 0; i < numVertices; i++) {
-                    let indices = json.points_in_vertex[i];
+                        indices.forEach(idx => {
+                            // R indices are 1-based
+                            let species = "unknown";
+                            if (Array.isArray(originalData)) {
+                                const row = originalData[idx - 1];
+                                if (row) species = row.Species || row.label || "unknown";
+                            }
+                            speciesCounts[species] = (speciesCounts[species] || 0) + 1;
+                        });
 
-                    // Fix: Handle unboxed single numbers from R JSON
-                    if (typeof indices === 'number') {
-                        indices = [indices];
-                    } else if (!indices) {
-                        indices = [];
+                        const entries = Object.entries(speciesCounts);
+                        if (entries.length === 0) return "unknown";
+                        return entries.reduce((a, b) => a[1] > b[1] ? a : b)[0];
+                    };
+
+                    for (let i = 0; i < numVertices; i++) {
+                        let indices = parsedData.points_in_vertex[i];
+                        if (typeof indices === 'number') indices = [indices];
+                        if (!indices) indices = [];
+
+                        const level = parsedData.level_of_vertex[i];
+                        const size = indices.length;
+                        const id = `node_${i + 1}`;
+                        const species = getSpecies(indices);
+
+                        nodes.push({
+                            id: id,
+                            group: level,
+                            val: size,
+                            name: id,
+                            desc: `Cluster ${id} (Size: ${size}, Species: ${species})`,
+                            species: species,
+                            indices: indices
+                        });
                     }
 
-                    const level = json.level_of_vertex[i];
-                    const size = indices.length;
-                    const id = `node_${i + 1}`;
-                    const species = getSpecies(indices);
+                    const links: any[] = [];
+                    const adjacency = parsedData.adjacency;
 
-                    nodes.push({
-                        id: id,
-                        group: level,
-                        val: size,
-                        name: id,
-                        desc: `Cluster ${id} (Size: ${size}, Species: ${species})`,
-                        species: species,
-                        indices: indices
-                    });
-                }
-
-                const links: any[] = [];
-                const adjacency = json.adjacency;
-
-                if (Array.isArray(adjacency)) {
                     for (let i = 0; i < numVertices; i++) {
                         for (let j = i + 1; j < numVertices; j++) {
                             if (adjacency[i] && adjacency[i][j] === 1) {
@@ -451,25 +483,41 @@ export function MapperGraph({ interval, overlap, clusteringMethod }: MapperGraph
                             }
                         }
                     }
+
+                    const reverseLinks = links.map(link => ({
+                        source: link.target,
+                        target: link.source,
+                        value: link.value,
+                        isReverse: true
+                    }));
+
+                    setData({
+                        nodes,
+                        links: [...links, ...reverseLinks],
+                        originalData: parsedData.original_data,
+                        rawNodes: nodes,
+                        adjacency: parsedData.adjacency
+                    });
+
+                    if (parsedData.original_data) {
+                        analyzeData(parsedData.original_data);
+                    }
+
+                } else {
+                    // Raw Data
+                    console.log("Detected Raw Data. Computing topology...");
+                    console.log("Uploaded Data Sample:", Array.isArray(parsedData) ? parsedData[0] : parsedData);
+
+                    // Set source data to trigger Mapper computation
+                    onDataUpload(parsedData);
+
+                    // Analyze columns immediately for coloring options
+                    analyzeData(parsedData);
                 }
-
-                const reverseLinks = links.map(link => ({
-                    source: link.target,
-                    target: link.source,
-                    value: link.value,
-                    isReverse: true
-                }));
-
-                setData({
-                    nodes,
-                    links: [...links, ...reverseLinks],
-                    originalData: json.original_data,
-                    rawNodes: nodes,
-                });
 
             } catch (error) {
                 console.error("Error parsing JSON:", error);
-                alert("Error parsing JSON file.");
+                alert("Invalid JSON file");
             }
         };
         reader.readAsText(file);
@@ -602,11 +650,6 @@ export function MapperGraph({ interval, overlap, clusteringMethod }: MapperGraph
                 // Interaction
                 onNodeDragEnd={handleNodeDragEnd}
                 enablePointerInteraction={true}
-
-                // Particles for visual flair (data flowing) - Bidirectional now
-                linkDirectionalParticles={2}
-                linkDirectionalParticleWidth={2}
-                linkDirectionalParticleSpeed={0.005}
             />
         </div>
     );
