@@ -34,6 +34,7 @@ interface GraphData {
     links: Link[];
     originalData?: any[];
     rawNodes?: any[];
+    adjacency?: any;
 }
 
 interface MapperGraphProps {
@@ -389,14 +390,15 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
                 headers.map(header => `"${row[header]}"`).join(",")
             );
             csvContent = [headers.join(","), ...rows].join("\n");
-        } else if (typeof data.originalData === 'object' && Object.keys(data.originalData).length > 0) {
+        } else if (data.originalData && typeof data.originalData === 'object' && Object.keys(data.originalData).length > 0) {
             // Handle column-based format (list of vectors)
-            const columns = Object.keys(data.originalData);
-            const rowCount = (data.originalData as any)[columns[0]].length;
+            const originalData = data.originalData;
+            const columns = Object.keys(originalData);
+            const rowCount = (originalData as any)[columns[0]].length;
             const headers = columns;
             const rows = [];
             for (let i = 0; i < rowCount; i++) {
-                const row = columns.map(col => `"${(data.originalData as any)[col][i]}"`);
+                const row = columns.map(col => `"${(originalData as any)[col][i]}"`);
                 rows.push(row.join(","));
             }
             csvContent = [headers.join(","), ...rows].join("\n");

@@ -13,7 +13,7 @@ This tool allows researchers and data scientists to visualize the shape of their
 *   **Serverless R Backend**: Powered by WebR to run statistical computations entirely on the client side.
 *   **Interactive 3D Graph**: Navigate, zoom, and inspect topological networks in a rich 3D environment.
 *   **Custom Data Upload**: Support for uploading custom JSON datasets for immediate analysis.
-*   **eal-time Tuning**: Instantly adjust Mapper parameters like Interval, Overlap, and Clustering methods (DBSCAN, K-Means, Hierarchical).
+*   **Real-time Tuning**: Instantly adjust Mapper parameters like Interval, Overlap, and Clustering methods (DBSCAN, K-Means, Hierarchical).
 *   **Visualization**: Automatic column detection for adaptive node coloring and statistical insights.
 
 ## Getting Started
