@@ -34,14 +34,6 @@ bun dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
-## Learn More
-
-To learn more about the technologies used:
-
-- [Next.js](https://nextjs.org)
-- [WebR](https://docs.r-wasm.org/webr/latest/)
-- [React Force Graph](https://github.com/vasturiano/react-force-graph)
-
 ## License
 
 Created by [Kenny Wang](https://kennywang112.github.io/Profile/). Powered by [TDA-R Organization](https://github.com/TDA-R).

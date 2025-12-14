@@ -4,12 +4,18 @@ import React, { useEffect, useState, useRef, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 import { useWebR } from './WebRProvider';
 import { runMapperAlgo } from '@/lib/r-script';
-import { Download } from 'lucide-react';
+import { Download, Box, Square, Sun, Moon } from 'lucide-react';
 
 // Dynamically import ForceGraph3D with no SSR
 const ForceGraph3D = dynamic(() => import('react-force-graph-3d'), {
     ssr: false,
-    loading: () => <div className="flex items-center justify-center h-full text-zinc-500">Loading Graph Engine...</div>
+    loading: () => <div className="flex items-center justify-center h-full text-zinc-500">Loading 3D Engine...</div>
+});
+
+// Dynamically import ForceGraph2D with no SSR
+const ForceGraph2D = dynamic(() => import('react-force-graph-2d'), {
+    ssr: false,
+    loading: () => <div className="flex items-center justify-center h-full text-zinc-500">Loading 2D Engine...</div>
 });
 
 interface Node {
@@ -49,6 +55,8 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
     const { webR, isLoading: isWebRLoading } = useWebR();
     const [data, setData] = useState<GraphData>({ nodes: [], links: [] });
     const [isComputing, setIsComputing] = useState(false);
+    const [is3D, setIs3D] = useState(true);
+    const [isDarkMode, setIsDarkMode] = useState(true);
     const computationIdRef = useRef(0);
     const fgRef = useRef<any>(null);
 
@@ -100,6 +108,31 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
         return () => clearTimeout(timer);
     }, [webR, isWebRLoading, interval, overlap, clusteringMethod, sourceData]); // Add sourceData dependency
 
+    // Adjust Force Graph Simulation
+    useEffect(() => {
+        if (!fgRef.current) return;
+
+        // Add a small delay to ensure graph is initialized
+        const timer = setTimeout(() => {
+            if (fgRef.current) {
+                // Increase link distance (Edge length)
+                if (fgRef.current.d3Force) {
+                    const linkForce = fgRef.current.d3Force('link');
+                    if (linkForce) linkForce.distance(50); // Increased distance
+
+                    const chargeForce = fgRef.current.d3Force('charge');
+                    if (chargeForce) chargeForce.strength(-120); // More repulsion
+
+                    if (fgRef.current.d3ReheatSimulation) {
+                        fgRef.current.d3ReheatSimulation();
+                    }
+                }
+            }
+        }, 300); // Wait for render
+
+        return () => clearTimeout(timer);
+    }, [data, is3D]);
+
     const analyzeData = (data: any[]) => {
         if (!data || data.length === 0) return;
 
@@ -127,6 +160,29 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
         node.fx = node.x;
         node.fy = node.y;
         node.fz = node.z;
+    }, []);
+
+    // Custom 2D Rendering
+    const drawNode2D = useCallback((node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
+        const radius = Math.sqrt(node.val || 0.1) * 3;
+
+        ctx.beginPath();
+        ctx.arc(node.x, node.y, radius, 0, 2 * Math.PI, false);
+        ctx.fillStyle = nodeColors[node.id] || node.color || '#888';
+        ctx.fill();
+
+        // Black stroke
+        ctx.lineWidth = 1.5 / globalScale;
+        ctx.strokeStyle = '#000000';
+        ctx.stroke();
+    }, [nodeColors]);
+
+    const drawNodePointerArea2D = useCallback((node: any, color: string, ctx: CanvasRenderingContext2D) => {
+        const radius = Math.sqrt(node.val || 0.1) * 3 + 1; // Slight padding
+        ctx.beginPath();
+        ctx.arc(node.x, node.y, radius, 0, 2 * Math.PI, false);
+        ctx.fillStyle = color;
+        ctx.fill();
     }, []);
 
     const downloadCSV = (content: string, filename: string) => {
@@ -544,7 +600,7 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
     }
 
     return (
-        <div className="h-full w-full bg-black relative overflow-hidden">
+        <div className={`h-full w-full relative overflow-hidden ${isDarkMode ? 'bg-black' : 'bg-white'}`}>
             {isComputing && (
                 <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/80 backdrop-blur-sm">
                     <div className="bg-zinc-900/90 px-4 py-2 rounded-full border border-zinc-800 flex items-center gap-2">
@@ -554,26 +610,28 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
                 </div>
             )}
             <div className="absolute top-6 right-48 z-50 pointer-events-none flex flex-col items-end gap-2 max-h-[calc(100vh-3rem)] w-64">
-                <div className="bg-zinc-900/95 backdrop-blur-xl border border-zinc-800 p-5 rounded-xl text-xs text-zinc-400 shadow-2xl pointer-events-auto w-full overflow-y-auto">
-                    <h3 className="text-zinc-100 font-bold mb-3 text-sm tracking-wide">Topology Stats</h3>
+                <div className={`backdrop-blur-xl border p-5 rounded-xl text-xs shadow-2xl pointer-events-auto w-full overflow-y-auto ${isDarkMode ? 'bg-zinc-900/95 border-zinc-800 text-zinc-400' : 'bg-white/95 border-zinc-200 text-zinc-600'
+                    }`}>
+                    <h3 className={`font-bold mb-3 text-sm tracking-wide ${isDarkMode ? 'text-zinc-100' : 'text-zinc-800'}`}>Topology Stats</h3>
                     <div className="flex justify-between mb-2">
                         <span className="font-medium">Nodes (Clusters):</span>
-                        <span className="text-zinc-200 font-mono">{data.nodes.length}</span>
+                        <span className={`font-mono ${isDarkMode ? 'text-zinc-200' : 'text-zinc-800'}`}>{data.nodes.length}</span>
                     </div>
                     <div className="flex justify-between mb-2">
                         <span className="font-medium">Edges (Overlaps):</span>
-                        <span className="text-zinc-200 font-mono">{data.links.filter(l => !l.isReverse).length}</span>
+                        <span className={`font-mono ${isDarkMode ? 'text-zinc-200' : 'text-zinc-800'}`}>{data.links.filter(l => !l.isReverse).length}</span>
                     </div>
 
                     {/* Column Selection */}
                     {columns.length > 0 && (
-                        <div className="mt-4 pt-4 border-t border-zinc-800">
+                        <div className={`mt-4 pt-4 border-t ${isDarkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
                             <label htmlFor="color-by-select" className="block text-zinc-500 mb-1">Color By:</label>
                             <select
                                 id="color-by-select"
                                 value={selectedColumn}
                                 onChange={(e) => setSelectedColumn(e.target.value)}
-                                className="w-full bg-zinc-800 border border-zinc-700 text-zinc-200 rounded px-2 py-1.5 focus:outline-none focus:border-blue-500 transition-colors text-xs"
+                                className={`w-full border rounded px-2 py-1.5 focus:outline-none focus:border-blue-500 transition-colors text-xs ${isDarkMode ? 'bg-zinc-800 border-zinc-700 text-zinc-200' : 'bg-zinc-50 border-zinc-300 text-zinc-800'
+                                    }`}
                             >
                                 {columns.map(col => (
                                     <option key={col.name} value={col.name}>
@@ -584,20 +642,41 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
                         </div>
                     )}
 
-                    <div className="mt-4 pt-4 border-t border-zinc-800 space-y-2.5">
+                    <div className={`mt-4 pt-4 border-t space-y-2.5 ${isDarkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
+                        <button
+                            onClick={() => setIs3D(!is3D)}
+                            className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-lg transition-all border font-medium active:scale-95 ${isDarkMode ? 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border-zinc-700 hover:border-zinc-600' : 'bg-zinc-100 hover:bg-zinc-200 text-zinc-800 border-zinc-300 hover:border-zinc-400'
+                                }`}
+                        >
+                            {is3D ? <Square className="w-3.5 h-3.5" /> : <Box className="w-3.5 h-3.5" />}
+                            Switch to {is3D ? '2D' : '3D'}
+                        </button>
+
+                        <button
+                            onClick={() => setIsDarkMode(!isDarkMode)}
+                            className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-lg transition-all border font-medium active:scale-95 ${isDarkMode ? 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border-zinc-700 hover:border-zinc-600' : 'bg-zinc-100 hover:bg-zinc-200 text-zinc-800 border-zinc-300 hover:border-zinc-400'
+                                }`}
+                        >
+                            {isDarkMode ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
+                            {isDarkMode ? 'Light' : 'Dark'} Mode
+                        </button>
+
                         <button
                             onClick={handleDownloadNodes}
-                            className="w-full flex items-center justify-center gap-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 py-2.5 rounded-lg transition-all border border-zinc-700 hover:border-zinc-600 font-medium active:scale-95"
+                            className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-lg transition-all border font-medium active:scale-95 ${isDarkMode ? 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border-zinc-700 hover:border-zinc-600' : 'bg-zinc-100 hover:bg-zinc-200 text-zinc-800 border-zinc-300 hover:border-zinc-400'
+                                }`}
                         >
                             <Download className="w-3.5 h-3.5" /> Download Nodes CSV
                         </button>
                         <button
                             onClick={handleDownloadData}
-                            className="w-full flex items-center justify-center gap-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 py-2.5 rounded-lg transition-all border border-zinc-700 hover:border-zinc-600 font-medium active:scale-95"
+                            className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-lg transition-all border font-medium active:scale-95 ${isDarkMode ? 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border-zinc-700 hover:border-zinc-600' : 'bg-zinc-100 hover:bg-zinc-200 text-zinc-800 border-zinc-300 hover:border-zinc-400'
+                                }`}
                         >
                             <Download className="w-3.5 h-3.5" /> Download Original Data
                         </button>
-                        <label className="block w-full cursor-pointer bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-3 py-2.5 rounded-lg transition-colors border border-zinc-700 text-center text-xs font-medium">
+                        <label className={`block w-full cursor-pointer px-3 py-2.5 rounded-lg transition-colors border text-center text-xs font-medium ${isDarkMode ? 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border-zinc-700' : 'bg-zinc-100 hover:bg-zinc-200 text-zinc-800 border-zinc-300'
+                            }`}>
                             <span className="flex items-center justify-center gap-2">
                                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m-4-4v12" /></svg>
                                 Upload JSON
@@ -606,8 +685,8 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
                         </label>
                     </div>
 
-                    <div className="mt-5 pt-3 border-t border-zinc-800">
-                        <h4 className="text-zinc-100 font-bold mb-2.5 text-xs">Legend</h4>
+                    <div className={`mt-5 pt-3 border-t ${isDarkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
+                        <h4 className={`font-bold mb-2.5 text-xs ${isDarkMode ? 'text-zinc-100' : 'text-zinc-800'}`}>Legend</h4>
                         {columns.find(c => c.name === selectedColumn)?.type === 'numerical' && columnStats ? (
                             <div className="flex flex-col gap-1">
                                 <div className="h-3 w-full rounded" style={{ background: 'linear-gradient(to right, hsl(240, 70%, 50%), hsl(180, 70%, 50%), hsl(120, 70%, 50%), hsl(60, 70%, 50%), hsl(0, 70%, 50%))' }}></div>
@@ -626,33 +705,55 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
             </div>
 
             <div className="absolute bottom-4 left-4 z-10 pointer-events-none">
-                <p className="text-zinc-500 text-xs">
+                <p className={`${isDarkMode ? 'text-zinc-500' : 'text-zinc-400'} text-xs`}>
                     Left-click: Rotate • Right-click: Pan • Scroll: Zoom • Drag Node: Move
                 </p>
             </div>
 
-            <ForceGraph3D
-                ref={fgRef}
-                graphData={data}
-                nodeLabel="desc"
-                nodeColor={node => nodeColors[node.id!] || (node as any).color || '#888'}
-                nodeRelSize={6}
-                nodeResolution={8} // Reduced resolution for potentially better performance
-                nodeOpacity={0.9}
+            {is3D ? (
+                <ForceGraph3D
+                    ref={fgRef}
+                    graphData={data}
+                    nodeLabel="desc"
+                    nodeColor={node => nodeColors[node.id!] || (node as any).color || '#888'}
+                    nodeRelSize={3}
+                    nodeResolution={8}
+                    nodeOpacity={0.9}
 
-                // Link styling
-                linkColor={() => '#ffffff20'} // Softer link color
-                linkWidth={1} // Uniform link width
-                linkOpacity={0.6} // Increased link opacity
+                    // Link styling
+                    linkColor={() => isDarkMode ? '#ffffff20' : '#00000020'}
+                    linkWidth={1}
+                    linkOpacity={0.6}
 
-                // Environment
-                backgroundColor="#000000"
-                showNavInfo={false}
+                    // Environment
+                    backgroundColor={isDarkMode ? "#000000" : "#ffffff"}
+                    showNavInfo={false}
 
-                // Interaction
-                onNodeDragEnd={handleNodeDragEnd}
-                enablePointerInteraction={true}
-            />
+                    // Interaction
+                    onNodeDragEnd={handleNodeDragEnd}
+                    enablePointerInteraction={true}
+                />
+            ) : (
+                <ForceGraph2D
+                    ref={fgRef}
+                    graphData={data}
+                    nodeLabel="desc"
+                    // Use custom rendering for black edges
+                    nodeCanvasObject={drawNode2D}
+                    nodePointerAreaPaint={drawNodePointerArea2D}
+
+                    // Link styling
+                    linkColor={() => isDarkMode ? '#ffffff20' : '#00000020'}
+                    linkWidth={1}
+
+                    // Environment
+                    backgroundColor={isDarkMode ? "#000000" : "#ffffff"}
+
+                    // Interaction
+                    onNodeDragEnd={handleNodeDragEnd}
+                    enablePointerInteraction={true}
+                />
+            )}
         </div>
     );
 }
