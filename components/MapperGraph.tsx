@@ -4,7 +4,7 @@ import React, { useEffect, useState, useRef, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 import { useWebR } from './WebRProvider';
 import { runMapperAlgo } from '@/lib/r-script';
-import { Download, Box, Square, Sun, Moon } from 'lucide-react';
+import { Download, Box, Square, Sun, Moon, Network } from 'lucide-react';
 
 // Dynamically import ForceGraph3D with no SSR
 const ForceGraph3D = dynamic(() => import('react-force-graph-3d'), {
@@ -57,6 +57,7 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
     const [isComputing, setIsComputing] = useState(false);
     const [is3D, setIs3D] = useState(true);
     const [isDarkMode, setIsDarkMode] = useState(true);
+    const [useEdgeWeights, setUseEdgeWeights] = useState(true);
     const computationIdRef = useRef(0);
     const fgRef = useRef<any>(null);
 
@@ -118,7 +119,16 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
                 // Increase link distance (Edge length)
                 if (fgRef.current.d3Force) {
                     const linkForce = fgRef.current.d3Force('link');
-                    if (linkForce) linkForce.distance(50); // Increased distance
+                    if (linkForce) {
+                        if (useEdgeWeights) {
+                            linkForce.distance((link: any) => {
+                                const val = link.value || 1;
+                                return 30 + (100 / (Math.sqrt(val) || 1));
+                            });
+                        } else {
+                            linkForce.distance(50); // Fixed distance
+                        }
+                    }
 
                     const chargeForce = fgRef.current.d3Force('charge');
                     if (chargeForce) chargeForce.strength(-120); // More repulsion
@@ -131,7 +141,7 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
         }, 300); // Wait for render
 
         return () => clearTimeout(timer);
-    }, [data, is3D]);
+    }, [data, is3D, useEdgeWeights]);
 
     const analyzeData = (data: any[]) => {
         if (!data || data.length === 0) return;
@@ -659,6 +669,14 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
                         >
                             {isDarkMode ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
                             {isDarkMode ? 'Light' : 'Dark'} Mode
+                        </button>
+
+                        <button
+                            onClick={() => setUseEdgeWeights(!useEdgeWeights)}
+                            className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-lg transition-all border font-medium active:scale-95 ${isDarkMode ? 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border-zinc-700 hover:border-zinc-600' : 'bg-zinc-100 hover:bg-zinc-200 text-zinc-800 border-zinc-300 hover:border-zinc-400'} ${useEdgeWeights && isDarkMode ? 'border-zinc-500' : ''}`}
+                        >
+                            <Network className="w-3.5 h-3.5" />
+                            Weights: {useEdgeWeights ? 'Dynamic' : 'Fixed'}
                         </button>
 
                         <button
