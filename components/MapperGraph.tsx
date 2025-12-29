@@ -41,6 +41,7 @@ interface GraphData {
     originalData?: any[];
     rawNodes?: any[];
     adjacency?: any;
+    cc?: Record<string, number[]>; // Pre-calculated node attributes
 }
 
 interface MapperGraphProps {
@@ -62,7 +63,7 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
     const fgRef = useRef<any>(null);
 
     // Dynamic Coloring State
-    const [columns, setColumns] = useState<{ name: string; type: 'numerical' | 'categorical' }[]>([]);
+    const [columns, setColumns] = useState<{ name: string; type: 'numerical' | 'categorical'; source?: 'cc' | 'data' }[]>([]);
     const [selectedColumn, setSelectedColumn] = useState<string>('');
     const [nodeColors, setNodeColors] = useState<Record<string, string>>({});
     const [columnStats, setColumnStats] = useState<{ min: number; max: number } | null>(null);
@@ -143,18 +144,30 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
         return () => clearTimeout(timer);
     }, [data, is3D, useEdgeWeights]);
 
-    const analyzeData = (data: any[]) => {
-        if (!data || data.length === 0) return;
+    const analyzeData = (data: any[], cc?: Record<string, number[]>) => {
+        const cols: { name: string, type: 'numerical' | 'categorical', source?: 'cc' | 'data' }[] = [];
 
-        // Detect columns
-        const firstRow = data[0];
-        if (typeof firstRow !== 'object') return;
+        // 1. Add Pre-calculated Attributes (CC)
+        if (cc) {
+            Object.keys(cc).forEach(key => {
+                cols.push({ name: key, type: 'numerical', source: 'cc' });
+            });
+        }
 
-        const cols = Object.keys(firstRow).map(key => {
-            const val = firstRow[key];
-            const isNum = typeof val === 'number';
-            return { name: key, type: isNum ? 'numerical' : 'categorical' } as const;
-        });
+        // 2. Add Original Data Columns
+        if (data && data.length > 0) {
+            const firstRow = data[0];
+            if (typeof firstRow === 'object') {
+                Object.keys(firstRow).forEach(key => {
+                    // Avoid duplicates if key matches cc
+                    if (cols.find(c => c.name === key)) return;
+
+                    const val = firstRow[key];
+                    const isNum = typeof val === 'number';
+                    cols.push({ name: key, type: isNum ? 'numerical' : 'categorical', source: 'data' });
+                });
+            }
+        }
 
         setColumns(cols);
 
@@ -214,16 +227,38 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
         if (!data.originalData) return;
 
         const originalData = data.originalData;
+        const cc = data.cc;
+
+        const cols: { name: string, type: 'numerical' | 'categorical', source?: 'cc' | 'data' }[] = [];
+
+        // 1. Add Pre-calculated Attributes (CC)
+        if (cc) {
+            Object.keys(cc).forEach(key => {
+                cols.push({ name: key, type: 'numerical', source: 'cc' });
+            });
+        }
 
         // Safety check for empty data
-        if (Array.isArray(originalData) && originalData.length === 0) return;
-        if (typeof originalData === 'object' && !Array.isArray(originalData) && Object.keys(originalData).length === 0) return;
+        if (Array.isArray(originalData) && originalData.length === 0) {
+            setColumns(cols);
+            return;
+        }
+        if (typeof originalData === 'object' && !Array.isArray(originalData) && Object.keys(originalData).length === 0) {
+            setColumns(cols);
+            return;
+        }
 
         // Check for direct node values (flat numeric array)
         if (Array.isArray(originalData) && typeof originalData[0] === 'number') {
             console.log("Detected direct node values.");
-            setColumns([{ name: 'Node Value', type: 'numerical' }]);
-            setSelectedColumn('Node Value');
+            cols.push({ name: 'Node Value', type: 'numerical', source: 'data' });
+            setColumns(cols);
+
+            // Default to CC if present, else Node Value
+            if (!selectedColumn) {
+                const defaultCol = cols.find(c => c.source === 'cc')?.name || 'Node Value';
+                setSelectedColumn(defaultCol);
+            }
             return;
         }
 
@@ -243,13 +278,17 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
         }
 
         if (!firstRow) {
+            setColumns(cols);
             console.warn("Could not determine data structure from original_data");
             return;
         }
 
         const keys = Object.keys(firstRow);
 
-        const cols = keys.map(key => {
+        keys.forEach(key => {
+            // Avoid duplicates with CC
+            if (cols.find(c => c.name === key)) return;
+
             // Check type based on first few non-null values
             let type: 'numerical' | 'categorical' = 'categorical';
             const sampleSize = Math.min(Array.isArray(originalData) ? originalData.length : 5, 5);
@@ -261,23 +300,65 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
                     break;
                 }
             }
-            return { name: key, type };
+            cols.push({ name: key, type, source: 'data' });
         });
 
         setColumns(cols);
 
         // Default to Species if exists, else first categorical, else first numerical
         if (!selectedColumn || !cols.find(c => c.name === selectedColumn)) {
-            const defaultCol = cols.find(c => c.name.toLowerCase() === 'species') || cols.find(c => c.type === 'categorical') || cols[0];
-            if (defaultCol) setSelectedColumn(defaultCol.name);
+            // Priority: CC -> Species -> Categorical -> First
+            const defaultCol =
+                cols.find(c => c.source === 'cc')?.name ||
+                cols.find(c => c.name.toLowerCase() === 'species')?.name ||
+                cols.find(c => c.type === 'categorical')?.name ||
+                cols[0]?.name;
+
+            if (defaultCol) setSelectedColumn(defaultCol);
         }
-    }, [data.originalData]);
+    }, [data.originalData, data.cc]);
 
     // Calculate node colors when data or selected column changes
     useEffect(() => {
-        if (!data.nodes.length || !selectedColumn || !data.originalData) return;
+        if (!data.nodes.length || !selectedColumn) return;
 
         const newNodeColors: Record<string, string> = {};
+
+        // 0. Check for Pre-calculated Attributes (CC)
+        if (data.cc && data.cc[selectedColumn]) {
+            const values = data.cc[selectedColumn];
+            let min = Infinity;
+            let max = -Infinity;
+
+            // Find min/max
+            values.forEach(v => {
+                if (typeof v === 'number' && !isNaN(v)) {
+                    min = Math.min(min, v);
+                    max = Math.max(max, v);
+                }
+            });
+
+            setColumnStats({ min, max });
+
+            data.nodes.forEach((node, idx) => {
+                // Assume nodes are ordered same as cc array (created in loop 0..N)
+                // Use index from creation or parse ID if safer, but array index is reliable here.
+                const val = values[idx];
+
+                if (val !== undefined && min !== Infinity && max !== -Infinity && !isNaN(val)) {
+                    const t = (max - min === 0) ? 0.5 : (val - min) / (max - min);
+                    const hue = 240 * (1 - t);
+                    newNodeColors[node.id] = `hsl(${hue}, 70%, 50%)`;
+                } else {
+                    newNodeColors[node.id] = '#888';
+                }
+            });
+
+            setNodeColors(newNodeColors);
+            return;
+        }
+
+        if (!data.originalData) return;
 
         // Special handling for direct node values
         if (selectedColumn === 'Node Value' && Array.isArray(data.originalData) && typeof data.originalData[0] === 'number') {
@@ -403,7 +484,7 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
 
         setNodeColors(newNodeColors);
 
-    }, [selectedColumn, columns, data.nodes.length, data.originalData]);
+    }, [selectedColumn, columns, data.nodes.length, data.originalData, data.cc]);
 
     const handleDownloadNodes = () => {
         if (!data.nodes.length) return;
@@ -559,16 +640,34 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
                         isReverse: true
                     }));
 
+                    // Normalize CC data (handle row-based array from R/JSON)
+                    let ccData = parsedData.cc;
+                    console.log("Raw CC Data:", ccData); // Log 1
+
+                    if (Array.isArray(ccData) && ccData.length > 0) {
+                        const firstRow = ccData[0];
+                        if (typeof firstRow === 'object') {
+                            console.log("Detected Array of Objects for CC. Transposing..."); // Log 2
+                            const newCC: Record<string, number[]> = {};
+                            Object.keys(firstRow).forEach(key => {
+                                newCC[key] = ccData.map((row: any) => row[key]);
+                            });
+                            ccData = newCC;
+                        }
+                    }
+                    console.log("Normalized CC Data:", ccData); // Log 3
+
                     setData({
                         nodes,
                         links: [...links, ...reverseLinks],
                         originalData: parsedData.original_data,
                         rawNodes: nodes,
-                        adjacency: parsedData.adjacency
+                        adjacency: parsedData.adjacency,
+                        cc: ccData
                     });
 
-                    if (parsedData.original_data) {
-                        analyzeData(parsedData.original_data);
+                    if (parsedData.original_data || ccData) {
+                        // analyzeData(parsedData.original_data, ccData);
                     }
 
                 } else {
@@ -645,7 +744,7 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
                             >
                                 {columns.map(col => (
                                     <option key={col.name} value={col.name}>
-                                        {col.name} ({col.type === 'numerical' ? '#' : 'Aa'})
+                                        {col.source === 'cc' ? '[Metric] ' : ''}{col.name} ({col.type === 'numerical' ? '#' : 'Aa'})
                                     </option>
                                 ))}
                             </select>

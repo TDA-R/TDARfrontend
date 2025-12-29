@@ -249,6 +249,7 @@ export async function runMapperAlgo(
         links: [...links, ...reverseLinks],
         originalData: parsedData.original_data,
         rawNodes: nodes, // We reconstructed nodes, so this is fine
-        adjacency: parsedData.adjacency
+        adjacency: parsedData.adjacency,
+        cc: parsedData.cc // Pass pre-calculated attributes
     };
 }
