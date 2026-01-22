@@ -67,6 +67,7 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
     const [selectedColumn, setSelectedColumn] = useState<string>('');
     const [nodeColors, setNodeColors] = useState<Record<string, string>>({});
     const [columnStats, setColumnStats] = useState<{ min: number; max: number } | null>(null);
+    const [categoricalLegend, setCategoricalLegend] = useState<{ label: string; color: string }[]>([]);
 
     // Run Mapper Algorithm using WebR
     useEffect(() => {
@@ -358,13 +359,20 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
             if (colDef && colDef.type === 'categorical') {
                 // Categorical CC
                 setColumnStats(null);
+                const legendMap = new Map<string, string>();
+
                 data.nodes.forEach((node, idx) => {
                     const val = values[idx];
                     // Use string value for color hash
-                    newNodeColors[node.id] = colorScale(String(val ?? 'unknown'));
+                    const strVal = String(val ?? 'unknown');
+                    const color = colorScale(strVal);
+                    newNodeColors[node.id] = color;
+                    if (!legendMap.has(strVal)) legendMap.set(strVal, color);
                 });
+                setCategoricalLegend(Array.from(legendMap.entries()).map(([label, color]) => ({ label, color })).sort((a, b) => a.label.localeCompare(b.label)));
             } else {
                 // Numerical CC
+                setCategoricalLegend([]);
                 let min = Infinity;
                 let max = -Infinity;
 
@@ -400,6 +408,7 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
 
         // Special handling for direct node values
         if (selectedColumn === 'Node Value' && Array.isArray(data.originalData) && typeof data.originalData[0] === 'number') {
+            setCategoricalLegend([]);
             const values = data.originalData as number[];
 
             // 1. Calculate stats for numerical (average per node)
@@ -463,6 +472,7 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
 
         if (colDef.type === 'numerical') {
             // 1. Calculate stats for numerical
+            setCategoricalLegend([]);
             const nodeValues: Record<string, number> = {};
 
             data.nodes.forEach(node => {
@@ -496,6 +506,7 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
         } else {
             // Categorical
             setColumnStats(null);
+            const legendMap = new Map<string, string>();
             data.nodes.forEach(node => {
                 const indices = Array.isArray(node.indices) ? node.indices : [node.indices];
                 const counts: Record<string, number> = {};
@@ -517,7 +528,9 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
                 });
 
                 newNodeColors[node.id] = colorScale(dominant);
+                if (!legendMap.has(dominant)) legendMap.set(dominant, colorScale(dominant));
             });
+            setCategoricalLegend(Array.from(legendMap.entries()).map(([label, color]) => ({ label, color })).sort((a, b) => a.label.localeCompare(b.label)));
         }
 
         setNodeColors(newNodeColors);
@@ -756,7 +769,7 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
                     </div>
                 </div>
             )}
-            <div className="absolute top-6 right-48 z-50 pointer-events-none flex flex-col items-end gap-2 max-h-[calc(100vh-3rem)] w-64">
+            <div className="absolute top-6 right-48 z-[100] pointer-events-none flex flex-col items-end gap-2 max-h-[calc(100vh-3rem)] w-64">
                 <div className={`backdrop-blur-xl border p-5 rounded-xl text-xs shadow-2xl pointer-events-auto w-full overflow-y-auto ${isDarkMode ? 'bg-zinc-900/95 border-zinc-800 text-zinc-400' : 'bg-white/95 border-zinc-200 text-zinc-600'
                     }`}>
                     <h3 className={`font-bold mb-3 text-sm tracking-wide ${isDarkMode ? 'text-zinc-100' : 'text-zinc-800'}`}>Topology Stats</h3>
@@ -850,9 +863,18 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
                                     <span>{columnStats.max.toFixed(2)}</span>
                                 </div>
                             </div>
+                        ) : categoricalLegend.length > 0 ? (
+                            <div className="flex flex-col gap-1.5 max-h-40 overflow-y-auto pr-1">
+                                {categoricalLegend.map(item => (
+                                    <div key={item.label} className="flex items-center gap-2">
+                                        <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: item.color }}></div>
+                                        <span className={`text-[10px] truncate ${isDarkMode ? 'text-zinc-400' : 'text-zinc-600'}`} title={item.label}>{item.label}</span>
+                                    </div>
+                                ))}
+                            </div>
                         ) : (
                             <div className="flex flex-col gap-2 max-h-32 overflow-y-auto">
-                                <span className="text-[10px] text-zinc-500 italic">Categorical coloring active</span>
+                                <span className="text-[10px] text-zinc-500 italic">No legend data</span>
                             </div>
                         )}
                     </div>
