@@ -234,7 +234,22 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
         // 1. Add Pre-calculated Attributes (CC)
         if (cc) {
             Object.keys(cc).forEach(key => {
-                cols.push({ name: key, type: 'numerical', source: 'cc' });
+                const values = cc[key] as any[];
+                let type: 'numerical' | 'categorical' = 'numerical';
+
+                // Check if actually numerical
+                if (Array.isArray(values)) {
+                    // Check sample to see if any non-numbers exist
+                    const sample = values.slice(0, 10);
+                    for (const v of sample) {
+                        if (v !== null && v !== undefined && v !== '' && (typeof v !== 'number' || isNaN(v))) {
+                            type = 'categorical';
+                            break;
+                        }
+                    }
+                }
+
+                cols.push({ name: key, type, source: 'cc' });
             });
         }
 
@@ -291,14 +306,25 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
 
             // Check type based on first few non-null values
             let type: 'numerical' | 'categorical' = 'categorical';
-            const sampleSize = Math.min(Array.isArray(originalData) ? originalData.length : 5, 5);
+            const sampleSize = Math.min(Array.isArray(originalData) ? originalData.length : 10, 10);
+
+            let isNumerical = true;
+            let hasValidData = false;
 
             for (let i = 0; i < sampleSize; i++) {
                 const val = Array.isArray(originalData) ? originalData[i][key] : (originalData as any)[key]?.[i];
-                if (typeof val === 'number' && !isNaN(val)) { // Ensure it's a valid number
-                    type = 'numerical';
-                    break;
+
+                if (val !== null && val !== undefined && val !== '') {
+                    hasValidData = true;
+                    if (typeof val !== 'number' || isNaN(val)) {
+                        isNumerical = false;
+                        break;
+                    }
                 }
+            }
+
+            if (hasValidData && isNumerical) {
+                type = 'numerical';
             }
             cols.push({ name: key, type, source: 'data' });
         });
@@ -326,33 +352,45 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
 
         // 0. Check for Pre-calculated Attributes (CC)
         if (data.cc && data.cc[selectedColumn]) {
-            const values = data.cc[selectedColumn];
-            let min = Infinity;
-            let max = -Infinity;
+            const values = data.cc[selectedColumn] as any[];
+            const colDef = columns.find(c => c.name === selectedColumn);
 
-            // Find min/max
-            values.forEach(v => {
-                if (typeof v === 'number' && !isNaN(v)) {
-                    min = Math.min(min, v);
-                    max = Math.max(max, v);
-                }
-            });
+            if (colDef && colDef.type === 'categorical') {
+                // Categorical CC
+                setColumnStats(null);
+                data.nodes.forEach((node, idx) => {
+                    const val = values[idx];
+                    // Use string value for color hash
+                    newNodeColors[node.id] = colorScale(String(val ?? 'unknown'));
+                });
+            } else {
+                // Numerical CC
+                let min = Infinity;
+                let max = -Infinity;
 
-            setColumnStats({ min, max });
+                // Find min/max
+                values.forEach(v => {
+                    if (typeof v === 'number' && !isNaN(v)) {
+                        min = Math.min(min, v);
+                        max = Math.max(max, v);
+                    }
+                });
 
-            data.nodes.forEach((node, idx) => {
-                // Assume nodes are ordered same as cc array (created in loop 0..N)
-                // Use index from creation or parse ID if safer, but array index is reliable here.
-                const val = values[idx];
+                setColumnStats({ min, max });
 
-                if (val !== undefined && min !== Infinity && max !== -Infinity && !isNaN(val)) {
-                    const t = (max - min === 0) ? 0.5 : (val - min) / (max - min);
-                    const hue = 240 * (1 - t);
-                    newNodeColors[node.id] = `hsl(${hue}, 70%, 50%)`;
-                } else {
-                    newNodeColors[node.id] = '#888';
-                }
-            });
+                data.nodes.forEach((node, idx) => {
+                    // Assume nodes are ordered same as cc array
+                    const val = values[idx];
+
+                    if (val !== undefined && min !== Infinity && max !== -Infinity && typeof val === 'number' && !isNaN(val)) {
+                        const t = (max - min === 0) ? 0.5 : (val - min) / (max - min);
+                        const hue = 240 * (1 - t);
+                        newNodeColors[node.id] = `hsl(${hue}, 70%, 50%)`;
+                    } else {
+                        newNodeColors[node.id] = '#888';
+                    }
+                });
+            }
 
             setNodeColors(newNodeColors);
             return;
