@@ -769,9 +769,10 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
                     </div>
                 </div>
             )}
-            <div className="absolute top-6 right-48 z-[100] pointer-events-none flex flex-col items-end gap-2 max-h-[calc(100vh-3rem)] w-64">
-                <div className={`backdrop-blur-xl border p-5 rounded-xl text-xs shadow-2xl pointer-events-auto w-full overflow-y-auto ${isDarkMode ? 'bg-zinc-900/95 border-zinc-800 text-zinc-400' : 'bg-white/95 border-zinc-200 text-zinc-600'
-                    }`}>
+            {/* Left Control Panel: Stats & Actions */}
+            <div className="absolute top-6 left-6 z-[100] pointer-events-none flex flex-col gap-2 max-h-[calc(100vh-3rem)] w-64">
+                <div className={`backdrop-blur-xl border p-5 rounded-xl text-xs shadow-2xl pointer-events-auto w-full overflow-y-auto ${isDarkMode ? 'bg-zinc-900/95 border-zinc-800 text-zinc-400' : 'bg-white/95 border-zinc-200 text-zinc-600'}`}>
+
                     <h3 className={`font-bold mb-3 text-sm tracking-wide ${isDarkMode ? 'text-zinc-100' : 'text-zinc-800'}`}>Topology Stats</h3>
                     <div className="flex justify-between mb-2">
                         <span className="font-medium">Nodes (Clusters):</span>
@@ -852,32 +853,35 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
                             <input type="file" className="hidden" accept=".json" onChange={handleFileUpload} />
                         </label>
                     </div>
+                </div>
+            </div>
 
-                    <div className={`mt-5 pt-3 border-t ${isDarkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
-                        <h4 className={`font-bold mb-2.5 text-xs ${isDarkMode ? 'text-zinc-100' : 'text-zinc-800'}`}>Legend</h4>
-                        {columns.find(c => c.name === selectedColumn)?.type === 'numerical' && columnStats ? (
-                            <div className="flex flex-col gap-1">
-                                <div className="h-3 w-full rounded" style={{ background: 'linear-gradient(to right, hsl(240, 70%, 50%), hsl(180, 70%, 50%), hsl(120, 70%, 50%), hsl(60, 70%, 50%), hsl(0, 70%, 50%))' }}></div>
-                                <div className="flex justify-between text-[10px] text-zinc-500 font-mono">
-                                    <span>{columnStats.min.toFixed(2)}</span>
-                                    <span>{columnStats.max.toFixed(2)}</span>
+            {/* Right Panel: Legend Only */}
+            <div className="absolute top-6 right-48 z-[100] pointer-events-none flex flex-col gap-2 max-h-[calc(100vh-3rem)] w-56">
+                <div className={`backdrop-blur-xl border p-5 rounded-xl text-xs shadow-2xl pointer-events-auto w-full overflow-y-auto ${isDarkMode ? 'bg-zinc-900/95 border-zinc-800 text-zinc-400' : 'bg-white/95 border-zinc-200 text-zinc-600'}`}>
+                    <h4 className={`font-bold mb-2.5 text-xs ${isDarkMode ? 'text-zinc-100' : 'text-zinc-800'}`}>Legend</h4>
+                    {columns.find(c => c.name === selectedColumn)?.type === 'numerical' && columnStats ? (
+                        <div className="flex flex-col gap-1">
+                            <div className="h-3 w-full rounded" style={{ background: 'linear-gradient(to right, hsl(240, 70%, 50%), hsl(180, 70%, 50%), hsl(120, 70%, 50%), hsl(60, 70%, 50%), hsl(0, 70%, 50%))' }}></div>
+                            <div className="flex justify-between text-[10px] text-zinc-500 font-mono">
+                                <span>{columnStats.min.toFixed(2)}</span>
+                                <span>{columnStats.max.toFixed(2)}</span>
+                            </div>
+                        </div>
+                    ) : categoricalLegend.length > 0 ? (
+                        <div className="flex flex-col gap-1.5 max-h-40 overflow-y-auto pr-1">
+                            {categoricalLegend.map(item => (
+                                <div key={item.label} className="flex items-center gap-2">
+                                    <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: item.color }}></div>
+                                    <span className={`text-[10px] truncate ${isDarkMode ? 'text-zinc-400' : 'text-zinc-600'}`} title={item.label}>{item.label}</span>
                                 </div>
-                            </div>
-                        ) : categoricalLegend.length > 0 ? (
-                            <div className="flex flex-col gap-1.5 max-h-40 overflow-y-auto pr-1">
-                                {categoricalLegend.map(item => (
-                                    <div key={item.label} className="flex items-center gap-2">
-                                        <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: item.color }}></div>
-                                        <span className={`text-[10px] truncate ${isDarkMode ? 'text-zinc-400' : 'text-zinc-600'}`} title={item.label}>{item.label}</span>
-                                    </div>
-                                ))}
-                            </div>
-                        ) : (
-                            <div className="flex flex-col gap-2 max-h-32 overflow-y-auto">
-                                <span className="text-[10px] text-zinc-500 italic">No legend data</span>
-                            </div>
-                        )}
-                    </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <div className="flex flex-col gap-2 max-h-32 overflow-y-auto">
+                            <span className="text-[10px] text-zinc-500 italic">No legend data</span>
+                        </div>
+                    )}
                 </div>
             </div>
 
