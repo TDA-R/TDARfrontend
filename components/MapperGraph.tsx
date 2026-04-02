@@ -4,7 +4,7 @@ import React, { useEffect, useState, useRef, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 import { useWebR } from './WebRProvider';
 import { runMapperAlgo } from '@/lib/r-script';
-import { Download, Box, Square, Sun, Moon, Network } from 'lucide-react';
+import { Download, Box, Square, Sun, Moon, Network, Play, ChevronDown, ChevronRight, Table2, BarChart2 } from 'lucide-react';
 
 // Dynamically import ForceGraph3D with no SSR
 const ForceGraph3D = dynamic(() => import('react-force-graph-3d'), {
@@ -69,47 +69,75 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
     const [columnStats, setColumnStats] = useState<{ min: number; max: number } | null>(null);
     const [categoricalLegend, setCategoricalLegend] = useState<{ label: string; color: string }[]>([]);
 
-    // Run Mapper Algorithm using WebR
-    useEffect(() => {
-        // Only run if webR is ready
-        if (!webR || isWebRLoading) return;
+    // Mapper Analytics State
+    interface MapperStats {
+        nodeCount: number;
+        edgeCount: number;
+        avgClusterSize: number;
+        maxClusterSize: number;
+        connectedComponents: number;
+        clusterSizeHist: { bin: string; count: number }[];
+        degreeHist: { bin: string; count: number }[];
+    }
+    const [mapperStats, setMapperStats] = useState<MapperStats | null>(null);
+    const [isAnalyticsOpen, setIsAnalyticsOpen] = useState(true);
+
+    // Manual trigger for running the toy model (Iris dataset)
+    const runToyModel = useCallback(async () => {
+        if (!webR || isWebRLoading || isComputing) return;
 
         const reqId = ++computationIdRef.current;
-
-        const computeGraph = async () => {
+        setIsComputing(true);
+        console.log("Starting Toy Model (Iris) Mapper computation...");
+        try {
+            const graphData = await runMapperAlgo(webR, interval, overlap, clusteringMethod, null);
             if (computationIdRef.current !== reqId) return;
+            console.log("Mapper computation result:", graphData);
+            if (graphData) {
+                setData(graphData);
+                if (graphData.originalData) {
+                    analyzeData(graphData.originalData);
+                }
+            }
+        } catch (error) {
+            if (computationIdRef.current !== reqId) return;
+            console.error("Error running Mapper:", error);
+        } finally {
+            if (computationIdRef.current === reqId) {
+                setIsComputing(false);
+            }
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [webR, isWebRLoading, interval, overlap, clusteringMethod]);
 
-            setIsComputing(true);
-            console.log("Starting Mapper computation...");
+    // Auto-run when user uploads new data (sourceData changes)
+    const prevSourceDataRef = useRef<any[] | null>(null);
+    useEffect(() => {
+        if (!webR || isWebRLoading || !sourceData) return;
+        if (sourceData === prevSourceDataRef.current) return;
+        prevSourceDataRef.current = sourceData;
+
+        const reqId = ++computationIdRef.current;
+        setIsComputing(true);
+        console.log("Running Mapper on uploaded data...");
+        const computeGraph = async () => {
             try {
-                // Pass sourceData to runMapperAlgo
                 const graphData = await runMapperAlgo(webR, interval, overlap, clusteringMethod, sourceData);
-
                 if (computationIdRef.current !== reqId) return;
-
-                console.log("Mapper computation result:", graphData);
                 if (graphData) {
                     setData(graphData);
-
-                    // Also analyze original data if present in graphData (for default/initial load)
-                    if (graphData.originalData) {
-                        analyzeData(graphData.originalData);
-                    }
+                    if (graphData.originalData) analyzeData(graphData.originalData);
                 }
             } catch (error) {
                 if (computationIdRef.current !== reqId) return;
-                console.error("Error running Mapper:", error);
+                console.error("Error running Mapper on uploaded data:", error);
             } finally {
-                if (computationIdRef.current === reqId) {
-                    setIsComputing(false);
-                }
+                if (computationIdRef.current === reqId) setIsComputing(false);
             }
         };
-
-        // Debounce to avoid too many R calls
         const timer = setTimeout(computeGraph, 500);
         return () => clearTimeout(timer);
-    }, [webR, isWebRLoading, interval, overlap, clusteringMethod, sourceData]); // Add sourceData dependency
+    }, [webR, isWebRLoading, sourceData, interval, overlap, clusteringMethod]);
 
     // Adjust Force Graph Simulation
     useEffect(() => {
@@ -344,6 +372,77 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
             if (defaultCol) setSelectedColumn(defaultCol);
         }
     }, [data.originalData, data.cc]);
+
+    // Compute Mapper Analytics when graph data changes
+    useEffect(() => {
+        const nodes = data.nodes;
+        const links = data.links.filter((l: any) => !l.isReverse);
+
+        if (!nodes.length) {
+            setMapperStats(null);
+            return;
+        }
+
+        const edgeCount = links.length;
+        const sizes = nodes.map((n: any) => typeof n.val === 'number' ? n.val : (Array.isArray(n.indices) ? n.indices.length : 1));
+        const avgClusterSize = sizes.reduce((a: number, b: number) => a + b, 0) / sizes.length;
+        const maxClusterSize = Math.max(...sizes);
+
+        // Degree per node
+        const degreeMap: Record<string, number> = {};
+        nodes.forEach((n: any) => { degreeMap[n.id] = 0; });
+        links.forEach((l: any) => {
+            const s = typeof l.source === 'object' ? l.source.id : l.source;
+            const t = typeof l.target === 'object' ? l.target.id : l.target;
+            degreeMap[s] = (degreeMap[s] || 0) + 1;
+            degreeMap[t] = (degreeMap[t] || 0) + 1;
+        });
+
+        // Connected components via Union-Find
+        const parent: Record<string, string> = {};
+        nodes.forEach((n: any) => { parent[n.id] = n.id; });
+        const find = (x: string): string => parent[x] === x ? x : (parent[x] = find(parent[x]));
+        links.forEach((l: any) => {
+            const s = typeof l.source === 'object' ? l.source.id : l.source;
+            const t = typeof l.target === 'object' ? l.target.id : l.target;
+            const ps = find(s), pt = find(t);
+            if (ps !== pt) parent[ps] = pt;
+        });
+        const connectedComponents = new Set(nodes.map((n: any) => find(n.id))).size;
+
+        // Cluster size histogram (5 bins)
+        const sizeMin = Math.min(...sizes);
+        const sizeMax = Math.max(...sizes);
+        const sizeBinCount = Math.min(5, sizeMax - sizeMin + 1);
+        const sizeBinWidth = sizeBinCount > 1 ? (sizeMax - sizeMin) / sizeBinCount : 1;
+        const sizeBins = Array.from({ length: sizeBinCount }, (_, i) => ({
+            lo: Math.round(sizeMin + i * sizeBinWidth),
+            hi: Math.round(sizeMin + (i + 1) * sizeBinWidth - (i === sizeBinCount - 1 ? 0 : 1))
+        }));
+        const clusterSizeHist = sizeBins.map(({ lo, hi }) => ({
+            bin: lo === hi ? `${lo}` : `${lo}-${hi}`,
+            count: sizes.filter((s: number) => s >= lo && s <= hi).length
+        }));
+
+        // Degree histogram (5 bins)
+        const degrees = Object.values(degreeMap);
+        const degMin = Math.min(...degrees);
+        const degMax = Math.max(...degrees);
+        const degBinCount = Math.min(5, degMax - degMin + 1);
+        const degBinWidth = degBinCount > 1 ? (degMax - degMin) / degBinCount : 1;
+        const degBins = Array.from({ length: degBinCount }, (_, i) => ({
+            lo: Math.round(degMin + i * degBinWidth),
+            hi: Math.round(degMin + (i + 1) * degBinWidth - (i === degBinCount - 1 ? 0 : 1))
+        }));
+        const degreeHist = degBins.map(({ lo, hi }) => ({
+            bin: lo === hi ? `${lo}` : `${lo}-${hi}`,
+            count: degrees.filter((d: number) => d >= lo && d <= hi).length
+        }));
+
+        setMapperStats({ nodeCount: nodes.length, edgeCount, avgClusterSize, maxClusterSize, connectedComponents, clusterSizeHist, degreeHist });
+    }, [data.nodes, data.links]);
+
+
 
     // Calculate node colors when data or selected column changes
     useEffect(() => {
@@ -770,7 +869,7 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
                 </div>
             )}
             {/* Left Control Panel: Stats & Actions */}
-            <div className="absolute top-6 left-6 z-[100] pointer-events-none flex flex-col gap-2 max-h-[calc(100vh-3rem)] w-64">
+            <div className="absolute top-6 left-6 z-[100] pointer-events-none flex flex-col gap-2 max-h-[calc(100vh-3rem)] w-64 overflow-y-auto">
                 <div className={`backdrop-blur-xl border p-5 rounded-xl text-xs shadow-2xl pointer-events-auto w-full overflow-y-auto ${isDarkMode ? 'bg-zinc-900/95 border-zinc-800 text-zinc-400' : 'bg-white/95 border-zinc-200 text-zinc-600'}`}>
 
                     <h3 className={`font-bold mb-3 text-sm tracking-wide ${isDarkMode ? 'text-zinc-100' : 'text-zinc-800'}`}>Topology Stats</h3>
@@ -804,6 +903,15 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
                     )}
 
                     <div className={`mt-4 pt-4 border-t space-y-2.5 ${isDarkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
+                        <button
+                            onClick={runToyModel}
+                            disabled={isComputing || isWebRLoading || !!sourceData}
+                            className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-lg transition-all border font-medium active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed ${isDarkMode ? 'bg-blue-600 hover:bg-blue-500 text-white border-blue-500 hover:border-blue-400' : 'bg-blue-500 hover:bg-blue-600 text-white border-blue-400 hover:border-blue-500'}`}
+                        >
+                            <Play className="w-3.5 h-3.5" />
+                            Run Toy Model (Iris)
+                        </button>
+
                         <button
                             onClick={() => setIs3D(!is3D)}
                             className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-lg transition-all border font-medium active:scale-95 ${isDarkMode ? 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border-zinc-700 hover:border-zinc-600' : 'bg-zinc-100 hover:bg-zinc-200 text-zinc-800 border-zinc-300 hover:border-zinc-400'
@@ -856,9 +964,10 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
                 </div>
             </div>
 
-            {/* Right Panel: Legend Only */}
-            <div className="absolute top-6 right-48 z-[100] pointer-events-none flex flex-col gap-2 max-h-[calc(100vh-3rem)] w-56">
-                <div className={`backdrop-blur-xl border p-5 rounded-xl text-xs shadow-2xl pointer-events-auto w-full overflow-y-auto ${isDarkMode ? 'bg-zinc-900/95 border-zinc-800 text-zinc-400' : 'bg-white/95 border-zinc-200 text-zinc-600'}`}>
+            {/* Right Panel: Legend + Mapper Analytics */}
+            <div className="fixed top-6 right-6 z-[100] pointer-events-none flex flex-col gap-3 max-h-[calc(100vh-3rem)] w-64 overflow-y-auto">
+                {/* Legend Card */}
+                <div className={`backdrop-blur-xl border p-4 rounded-xl text-xs shadow-2xl pointer-events-auto w-full ${isDarkMode ? 'bg-zinc-900/95 border-zinc-800 text-zinc-400' : 'bg-white/95 border-zinc-200 text-zinc-600'}`}>
                     <h4 className={`font-bold mb-2.5 text-xs ${isDarkMode ? 'text-zinc-100' : 'text-zinc-800'}`}>Legend</h4>
                     {columns.find(c => c.name === selectedColumn)?.type === 'numerical' && columnStats ? (
                         <div className="flex flex-col gap-1">
@@ -869,7 +978,7 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
                             </div>
                         </div>
                     ) : categoricalLegend.length > 0 ? (
-                        <div className="flex flex-col gap-1.5 max-h-40 overflow-y-auto pr-1">
+                        <div className="flex flex-col gap-1.5 max-h-36 overflow-y-auto pr-1">
                             {categoricalLegend.map(item => (
                                 <div key={item.label} className="flex items-center gap-2">
                                     <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: item.color }}></div>
@@ -878,11 +987,99 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
                             ))}
                         </div>
                     ) : (
-                        <div className="flex flex-col gap-2 max-h-32 overflow-y-auto">
-                            <span className="text-[10px] text-zinc-500 italic">No legend data</span>
-                        </div>
+                        <span className="text-[10px] text-zinc-500 italic">No legend data</span>
                     )}
                 </div>
+
+                {/* Mapper Analytics Card */}
+                {mapperStats && (
+                    <div className={`backdrop-blur-xl border rounded-xl text-xs shadow-2xl pointer-events-auto w-full overflow-hidden ${isDarkMode ? 'bg-zinc-900/95 border-zinc-800 text-zinc-400' : 'bg-white/95 border-zinc-200 text-zinc-600'}`}>
+                        <button
+                            onClick={() => setIsAnalyticsOpen(v => !v)}
+                            className={`w-full flex items-center justify-between px-4 py-3 font-bold text-xs tracking-wide ${isDarkMode ? 'text-zinc-100 hover:bg-zinc-800/50' : 'text-zinc-800 hover:bg-zinc-50'} transition-colors`}
+                        >
+                            <span className="flex items-center gap-2">
+                                <BarChart2 className="w-3.5 h-3.5" />
+                                Graph Analytics
+                            </span>
+                            {isAnalyticsOpen ? <ChevronDown className="w-3 h-3 shrink-0" /> : <ChevronRight className="w-3 h-3 shrink-0" />}
+                        </button>
+                        {isAnalyticsOpen && (
+                            <div className={`border-t px-4 pb-4 pt-3 space-y-3 ${isDarkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
+                                <div className="grid grid-cols-2 gap-1.5">
+                                    {[
+                                        { label: 'Nodes', value: mapperStats.nodeCount },
+                                        { label: 'Edges', value: mapperStats.edgeCount },
+                                        { label: 'Components', value: mapperStats.connectedComponents },
+                                        { label: 'Max Size', value: mapperStats.maxClusterSize },
+                                    ].map(({ label, value }) => (
+                                        <div key={label} className={`rounded-lg px-2 py-1.5 text-center ${isDarkMode ? 'bg-zinc-800' : 'bg-zinc-100'}`}>
+                                            <div className={`text-[9px] font-medium ${isDarkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>{label}</div>
+                                            <div className={`text-sm font-bold font-mono ${isDarkMode ? 'text-zinc-100' : 'text-zinc-800'}`}>{value}</div>
+                                        </div>
+                                    ))}
+                                </div>
+                                <div className={`text-[10px] font-mono ${isDarkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>
+                                    Avg cluster size: <span className={isDarkMode ? 'text-zinc-300' : 'text-zinc-700'}>{mapperStats.avgClusterSize.toFixed(1)}</span>
+                                </div>
+                                <div>
+                                    <p className={`text-[10px] font-semibold mb-1.5 ${isDarkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>Cluster Size Distribution</p>
+                                    {(() => {
+                                        const maxCount = Math.max(...mapperStats.clusterSizeHist.map(b => b.count), 1);
+                                        const barColor = isDarkMode ? '#3b82f6' : '#2563eb';
+                                        const W = 220, H = 52, pad = 12;
+                                        const bw = (W - pad - 4) / mapperStats.clusterSizeHist.length;
+                                        return (
+                                            <svg width={W} height={H + 16} className="overflow-visible">
+                                                {mapperStats.clusterSizeHist.map((b, i) => {
+                                                    const bh = Math.max(2, (b.count / maxCount) * H);
+                                                    const x = pad + i * bw;
+                                                    const y = H - bh;
+                                                    return (
+                                                        <g key={i}>
+                                                            <rect x={x + 1} y={y} width={bw - 3} height={bh} rx={2} fill={barColor} opacity={0.85} />
+                                                            <text x={x + bw / 2} y={H + 11} textAnchor="middle" fontSize={7} fill={isDarkMode ? '#71717a' : '#9ca3af'}>{b.bin}</text>
+                                                            {b.count > 0 && <text x={x + bw / 2} y={y - 2} textAnchor="middle" fontSize={7} fill={isDarkMode ? '#a1a1aa' : '#6b7280'}>{b.count}</text>}
+                                                        </g>
+                                                    );
+                                                })}
+                                                <line x1={pad} y1={0} x2={pad} y2={H} stroke={isDarkMode ? '#3f3f46' : '#e4e4e7'} strokeWidth={1} />
+                                                <line x1={pad} y1={H} x2={W} y2={H} stroke={isDarkMode ? '#3f3f46' : '#e4e4e7'} strokeWidth={1} />
+                                            </svg>
+                                        );
+                                    })()}
+                                </div>
+                                <div>
+                                    <p className={`text-[10px] font-semibold mb-1.5 ${isDarkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>Degree Distribution</p>
+                                    {(() => {
+                                        const maxCount = Math.max(...mapperStats.degreeHist.map(b => b.count), 1);
+                                        const barColor = isDarkMode ? '#8b5cf6' : '#7c3aed';
+                                        const W = 220, H = 52, pad = 12;
+                                        const bw = (W - pad - 4) / mapperStats.degreeHist.length;
+                                        return (
+                                            <svg width={W} height={H + 16} className="overflow-visible">
+                                                {mapperStats.degreeHist.map((b, i) => {
+                                                    const bh = Math.max(2, (b.count / maxCount) * H);
+                                                    const x = pad + i * bw;
+                                                    const y = H - bh;
+                                                    return (
+                                                        <g key={i}>
+                                                            <rect x={x + 1} y={y} width={bw - 3} height={bh} rx={2} fill={barColor} opacity={0.85} />
+                                                            <text x={x + bw / 2} y={H + 11} textAnchor="middle" fontSize={7} fill={isDarkMode ? '#71717a' : '#9ca3af'}>{b.bin}</text>
+                                                            {b.count > 0 && <text x={x + bw / 2} y={y - 2} textAnchor="middle" fontSize={7} fill={isDarkMode ? '#a1a1aa' : '#6b7280'}>{b.count}</text>}
+                                                        </g>
+                                                    );
+                                                })}
+                                                <line x1={pad} y1={0} x2={pad} y2={H} stroke={isDarkMode ? '#3f3f46' : '#e4e4e7'} strokeWidth={1} />
+                                                <line x1={pad} y1={H} x2={W} y2={H} stroke={isDarkMode ? '#3f3f46' : '#e4e4e7'} strokeWidth={1} />
+                                            </svg>
+                                        );
+                                    })()}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                )}
             </div>
 
             <div className="absolute bottom-4 left-4 z-10 pointer-events-none">
@@ -900,17 +1097,11 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
                     nodeRelSize={3}
                     nodeResolution={8}
                     nodeOpacity={0.9}
-
-                    // Link styling
                     linkColor={() => isDarkMode ? '#ffffff20' : '#00000020'}
                     linkWidth={1}
                     linkOpacity={0.6}
-
-                    // Environment
                     backgroundColor={isDarkMode ? "#000000" : "#ffffff"}
                     showNavInfo={false}
-
-                    // Interaction
                     onNodeDragEnd={handleNodeDragEnd}
                     enablePointerInteraction={true}
                 />
@@ -919,18 +1110,11 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
                     ref={fgRef}
                     graphData={data}
                     nodeLabel="desc"
-                    // Use custom rendering for black edges
                     nodeCanvasObject={drawNode2D}
                     nodePointerAreaPaint={drawNodePointerArea2D}
-
-                    // Link styling
                     linkColor={() => isDarkMode ? '#ffffff20' : '#00000020'}
                     linkWidth={1}
-
-                    // Environment
                     backgroundColor={isDarkMode ? "#000000" : "#ffffff"}
-
-                    // Interaction
                     onNodeDragEnd={handleNodeDragEnd}
                     enablePointerInteraction={true}
                 />

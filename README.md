@@ -21,19 +21,6 @@ This tool allows researchers and data scientists to visualize the shape of their
 First, run the development server:
 
 ```bash
-nvm install 22
-
-npm run dev
-# or
+yarn install
 yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
-
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
-
-## License
-
-Created by [Kenny Wang](https://kennywang112.github.io/Profile/). Powered by [TDA-R Organization](https://github.com/TDA-R).
