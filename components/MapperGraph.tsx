@@ -1,10 +1,11 @@
 'use client';
 
 import React, { useEffect, useState, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import dynamic from 'next/dynamic';
 import { useWebR } from './WebRProvider';
 import { runMapperAlgo } from '@/lib/r-script';
-import { Download, Box, Square, Sun, Moon, Network, Play, ChevronDown, ChevronRight, Table2, BarChart2 } from 'lucide-react';
+import { Download, Box, Square, Sun, Moon, Network, Play, ChevronDown, ChevronRight, Table2, BarChart2, X } from 'lucide-react';
 
 // Dynamically import ForceGraph3D with no SSR
 const ForceGraph3D = dynamic(() => import('react-force-graph-3d'), {
@@ -50,9 +51,10 @@ interface MapperGraphProps {
     clusteringMethod: string;
     sourceData: any[] | null;
     onDataUpload: (data: any[]) => void;
+    onGraphStats?: (nodeCount: number, edgeCount: number) => void;
 }
 
-export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, onDataUpload }: MapperGraphProps) {
+export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, onDataUpload, onGraphStats }: MapperGraphProps) {
     const { webR, isLoading: isWebRLoading } = useWebR();
     const [data, setData] = useState<GraphData>({ nodes: [], links: [] });
     const [isComputing, setIsComputing] = useState(false);
@@ -61,6 +63,12 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
     const [useEdgeWeights, setUseEdgeWeights] = useState(true);
     const computationIdRef = useRef(0);
     const fgRef = useRef<any>(null);
+    const portalSlotRef = useRef<HTMLElement | null>(null);
+    const [portalReady, setPortalReady] = useState(false);
+    useEffect(() => {
+        const el = document.getElementById('sidebar-controls-slot');
+        if (el) { portalSlotRef.current = el; setPortalReady(true); }
+    }, []);
 
     // Dynamic Coloring State
     const [columns, setColumns] = useState<{ name: string; type: 'numerical' | 'categorical'; source?: 'cc' | 'data' }[]>([]);
@@ -78,9 +86,80 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
         connectedComponents: number;
         clusterSizeHist: { bin: string; count: number }[];
         degreeHist: { bin: string; count: number }[];
+        labelDist: { col: string; counts: { label: string; count: number; pct: number }[] }[];
     }
     const [mapperStats, setMapperStats] = useState<MapperStats | null>(null);
     const [isAnalyticsOpen, setIsAnalyticsOpen] = useState(true);
+
+    // Node EDA State
+    interface ColDist {
+        name: string;
+        type: 'categorical' | 'numerical';
+        // categorical
+        counts?: { label: string; count: number }[];
+        // numerical
+        bins?: { bin: string; lo: number; hi: number; count: number }[];
+        min?: number; max?: number; mean?: number;
+    }
+    interface NodeEDA {
+        nodeId: string;
+        nodeName: string;
+        size: number;
+        cols: ColDist[];
+    }
+    const [selectedNodeEDA, setSelectedNodeEDA] = useState<NodeEDA | null>(null);
+
+    // Node click → EDA
+    const handleNodeClick = useCallback((node: any) => {
+        const originalData = data.originalData as any[] | undefined;
+        if (!originalData || !originalData.length) return;
+        const indices: number[] = Array.isArray(node.indices) ? node.indices : [];
+        const rows = indices.length > 0
+            ? indices.map(i => originalData[i]).filter(Boolean)
+            : [];
+        if (!rows.length) return;
+
+        const firstRow = rows[0];
+        if (typeof firstRow !== 'object' || firstRow === null) return;
+        const keys = Object.keys(firstRow);
+
+        const cols: ColDist[] = keys.map(key => {
+            const vals = rows.map(r => r[key]).filter(v => v !== null && v !== undefined && v !== '');
+            const isNum = vals.length > 0 && vals.every(v => typeof v === 'number' && !isNaN(v));
+            if (isNum) {
+                const nums = vals as number[];
+                const min = Math.min(...nums);
+                const max = Math.max(...nums);
+                const mean = nums.reduce((a: number, b: number) => a + b, 0) / nums.length;
+                const BIN_COUNT = Math.min(5, nums.length);
+                const binWidth = BIN_COUNT > 1 ? (max - min) / BIN_COUNT : 1;
+                const bins = Array.from({ length: BIN_COUNT }, (_, i) => {
+                    const lo = min + i * binWidth;
+                    const hi = i === BIN_COUNT - 1 ? max : min + (i + 1) * binWidth;
+                    const count = nums.filter(n => n >= lo && (i === BIN_COUNT - 1 ? n <= hi : n < hi)).length;
+                    const loR = parseFloat(lo.toFixed(1));
+                    const hiR = parseFloat(hi.toFixed(1));
+                    return { bin: loR === hiR ? `${loR}` : `${loR}–${hiR}`, lo, hi, count };
+                });
+                return { name: key, type: 'numerical' as const, bins, min, max, mean };
+            } else {
+                const strVals = vals.map(v => String(v));
+                const countMap: Record<string, number> = {};
+                strVals.forEach(v => { countMap[v] = (countMap[v] || 0) + 1; });
+                const counts = Object.entries(countMap)
+                    .sort((a, b) => b[1] - a[1])
+                    .map(([label, count]) => ({ label, count }));
+                return { name: key, type: 'categorical' as const, counts };
+            }
+        });
+
+        setSelectedNodeEDA({
+            nodeId: node.id,
+            nodeName: node.name || node.id,
+            size: rows.length,
+            cols,
+        });
+    }, [data.originalData]);
 
     // Manual trigger for running the toy model (Iris dataset)
     const runToyModel = useCallback(async () => {
@@ -439,8 +518,39 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
             count: degrees.filter((d: number) => d >= lo && d <= hi).length
         }));
 
-        setMapperStats({ nodeCount: nodes.length, edgeCount, avgClusterSize, maxClusterSize, connectedComponents, clusterSizeHist, degreeHist });
+        setMapperStats({ nodeCount: nodes.length, edgeCount, avgClusterSize, maxClusterSize, connectedComponents, clusterSizeHist, degreeHist, labelDist: [] });
+        onGraphStats?.(nodes.length, edgeCount);
     }, [data.nodes, data.links]);
+
+    // Compute label distribution from originalData (separate effect so it updates when data loads)
+    useEffect(() => {
+        setMapperStats(prev => {
+            if (!prev) return prev;
+            const originalData = data.originalData as any[] | undefined;
+            if (!originalData || !Array.isArray(originalData) || originalData.length === 0) return { ...prev, labelDist: [] };
+            const firstRow = originalData[0];
+            if (typeof firstRow !== 'object' || firstRow === null) return { ...prev, labelDist: [] };
+            const COLORS_CYCLE = ['#3b82f6','#8b5cf6','#10b981','#f59e0b','#ef4444','#06b6d4','#ec4899','#f97316'];
+            const labelDist = Object.keys(firstRow)
+                .filter(key => {
+                    const sample = originalData.slice(0, 10).map(r => r[key]).filter(v => v !== null && v !== undefined && v !== '');
+                    return sample.length > 0 && !sample.every(v => typeof v === 'number' && !isNaN(v));
+                })
+                .map(col => {
+                    const countMap: Record<string, number> = {};
+                    originalData.forEach(row => {
+                        const v = String(row[col] ?? '');
+                        if (v !== '') countMap[v] = (countMap[v] || 0) + 1;
+                    });
+                    const total = Object.values(countMap).reduce((a, b) => a + b, 0);
+                    const counts = Object.entries(countMap)
+                        .sort((a, b) => b[1] - a[1])
+                        .map(([label, count], i) => ({ label, count, pct: count / total, color: COLORS_CYCLE[i % COLORS_CYCLE.length] }));
+                    return { col, counts };
+                });
+            return { ...prev, labelDist };
+        });
+    }, [data.originalData]);
 
 
 
@@ -868,30 +978,20 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
                     </div>
                 </div>
             )}
-            {/* Left Control Panel: Stats & Actions */}
-            <div className="absolute top-6 left-6 z-[100] pointer-events-none flex flex-col gap-2 max-h-[calc(100vh-3rem)] w-64 overflow-y-auto">
-                <div className={`backdrop-blur-xl border p-5 rounded-xl text-xs shadow-2xl pointer-events-auto w-full overflow-y-auto ${isDarkMode ? 'bg-zinc-900/95 border-zinc-800 text-zinc-400' : 'bg-white/95 border-zinc-200 text-zinc-600'}`}>
-
-                    <h3 className={`font-bold mb-3 text-sm tracking-wide ${isDarkMode ? 'text-zinc-100' : 'text-zinc-800'}`}>Topology Stats</h3>
-                    <div className="flex justify-between mb-2">
-                        <span className="font-medium">Nodes (Clusters):</span>
-                        <span className={`font-mono ${isDarkMode ? 'text-zinc-200' : 'text-zinc-800'}`}>{data.nodes.length}</span>
-                    </div>
-                    <div className="flex justify-between mb-2">
-                        <span className="font-medium">Edges (Overlaps):</span>
-                        <span className={`font-mono ${isDarkMode ? 'text-zinc-200' : 'text-zinc-800'}`}>{data.links.filter(l => !l.isReverse).length}</span>
-                    </div>
+            {/* Controls Portal: rendered into Sidebar via portal */}
+            {portalReady && portalSlotRef.current && createPortal(
+                <div style={{ display: 'block', width: '100%' }} className="space-y-2 text-xs text-zinc-400">
 
                     {/* Column Selection */}
                     {columns.length > 0 && (
-                        <div className={`mt-4 pt-4 border-t ${isDarkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
-                            <label htmlFor="color-by-select" className="block text-zinc-500 mb-1">Color By:</label>
+                        <div style={{ width: '100%' }} className={`pt-3 border-t ${isDarkMode ? 'border-zinc-700' : 'border-zinc-200'}`}>
+                            <label htmlFor="color-by-select" className="block text-zinc-500 mb-1 text-xs">Color By:</label>
                             <select
                                 id="color-by-select"
                                 value={selectedColumn}
                                 onChange={(e) => setSelectedColumn(e.target.value)}
-                                className={`w-full border rounded px-2 py-1.5 focus:outline-none focus:border-blue-500 transition-colors text-xs ${isDarkMode ? 'bg-zinc-800 border-zinc-700 text-zinc-200' : 'bg-zinc-50 border-zinc-300 text-zinc-800'
-                                    }`}
+                                style={{ width: '100%' }}
+                                className={`border rounded px-2 py-1.5 focus:outline-none focus:border-blue-500 transition-colors text-xs ${isDarkMode ? 'bg-zinc-800 border-zinc-700 text-zinc-200' : 'bg-zinc-50 border-zinc-300 text-zinc-800'}`}
                             >
                                 {columns.map(col => (
                                     <option key={col.name} value={col.name}>
@@ -902,7 +1002,7 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
                         </div>
                     )}
 
-                    <div className={`mt-4 pt-4 border-t space-y-2.5 ${isDarkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
+                    <div style={{ width: '100%' }} className={`pt-3 border-t space-y-2.5 ${isDarkMode ? 'border-zinc-700' : 'border-zinc-200'}`}>
                         <button
                             onClick={runToyModel}
                             disabled={isComputing || isWebRLoading || !!sourceData}
@@ -961,11 +1061,14 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
                             <input type="file" className="hidden" accept=".json" onChange={handleFileUpload} />
                         </label>
                     </div>
-                </div>
-            </div>
+                </div>,
+                portalSlotRef.current
+            )}
+
 
             {/* Right Panel: Legend + Mapper Analytics */}
-            <div className="fixed top-6 right-6 z-[100] pointer-events-none flex flex-col gap-3 max-h-[calc(100vh-3rem)] w-64 overflow-y-auto">
+            <div className="absolute top-6 bottom-6 right-6 z-[100] pointer-events-none flex flex-col gap-3 w-[280px]">
+                <div className="flex flex-col gap-3 overflow-y-auto max-h-[calc(100%-200px)] scrollbar-hide">
                 {/* Legend Card */}
                 <div className={`backdrop-blur-xl border p-4 rounded-xl text-xs shadow-2xl pointer-events-auto w-full ${isDarkMode ? 'bg-zinc-900/95 border-zinc-800 text-zinc-400' : 'bg-white/95 border-zinc-200 text-zinc-600'}`}>
                     <h4 className={`font-bold mb-2.5 text-xs ${isDarkMode ? 'text-zinc-100' : 'text-zinc-800'}`}>Legend</h4>
@@ -993,7 +1096,7 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
 
                 {/* Mapper Analytics Card */}
                 {mapperStats && (
-                    <div className={`backdrop-blur-xl border rounded-xl text-xs shadow-2xl pointer-events-auto w-full overflow-hidden ${isDarkMode ? 'bg-zinc-900/95 border-zinc-800 text-zinc-400' : 'bg-white/95 border-zinc-200 text-zinc-600'}`}>
+                    <div className={`flex-1 flex flex-col backdrop-blur-xl border rounded-xl text-xs shadow-2xl pointer-events-auto w-full overflow-hidden ${isDarkMode ? 'bg-zinc-900/95 border-zinc-800 text-zinc-400' : 'bg-white/95 border-zinc-200 text-zinc-600'}`}>
                         <button
                             onClick={() => setIsAnalyticsOpen(v => !v)}
                             className={`w-full flex items-center justify-between px-4 py-3 font-bold text-xs tracking-wide ${isDarkMode ? 'text-zinc-100 hover:bg-zinc-800/50' : 'text-zinc-800 hover:bg-zinc-50'} transition-colors`}
@@ -1076,12 +1179,173 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
                                         );
                                     })()}
                                 </div>
+                                {/* Label Distribution */}
+                                {mapperStats.labelDist && mapperStats.labelDist.length > 0 && (
+                                    <div>
+                                        <p className={`text-[10px] font-semibold mb-2 ${isDarkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>Label Distribution</p>
+                                        {mapperStats.labelDist.map(ld => {
+                                            const COLORS_CYCLE = ['#3b82f6','#8b5cf6','#10b981','#f59e0b','#ef4444','#06b6d4','#ec4899','#f97316'];
+                                            return (
+                                                <div key={ld.col} className="mb-3">
+                                                    <p className={`text-[9px] uppercase tracking-wider mb-1 ${isDarkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>{ld.col}</p>
+                                                    {/* Stacked bar */}
+                                                    <div className="flex w-full h-3 rounded overflow-hidden mb-1.5">
+                                                        {ld.counts.map((c, i) => (
+                                                            <div
+                                                                key={c.label}
+                                                                title={`${c.label}: ${c.count} (${(c.pct * 100).toFixed(1)}%)`}
+                                                                style={{ width: `${c.pct * 100}%`, background: COLORS_CYCLE[i % COLORS_CYCLE.length] }}
+                                                            />
+                                                        ))}
+                                                    </div>
+                                                    {/* Legend dots */}
+                                                    <div className="flex flex-col gap-0.5">
+                                                        {ld.counts.map((c, i) => (
+                                                            <div key={c.label} className="flex items-center gap-1.5">
+                                                                <div className="w-2 h-2 rounded-sm shrink-0" style={{ background: COLORS_CYCLE[i % COLORS_CYCLE.length] }} />
+                                                                <span className={`text-[9px] truncate ${isDarkMode ? 'text-zinc-400' : 'text-zinc-500'}`} title={c.label}>{c.label}</span>
+                                                                <span className={`text-[9px] font-mono ml-auto shrink-0 ${isDarkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>{c.count} ({(c.pct * 100).toFixed(0)}%)</span>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                )}
                             </div>
                         )}
                     </div>
                 )}
+
+                </div>
+                {/* Node EDA: Click to Explore */}
+                <div className={`flex-1 flex flex-col backdrop-blur-xl border rounded-xl text-xs shadow-2xl pointer-events-auto w-full overflow-hidden ${isDarkMode ? 'bg-zinc-900/95 border-zinc-800 text-zinc-400' : 'bg-white/95 border-zinc-200 text-zinc-600'}`}>
+                    <div className={`flex items-center gap-2 px-4 py-3 border-b ${isDarkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
+                        <div className="w-2 h-2 rounded-full shrink-0" style={{ background: selectedNodeEDA ? (nodeColors[selectedNodeEDA.nodeId] || '#888') : (isDarkMode ? '#3f3f46' : '#d4d4d8') }} />
+                        <span className={`font-bold text-xs ${isDarkMode ? 'text-zinc-100' : 'text-zinc-800'}`}>
+                            {selectedNodeEDA ? selectedNodeEDA.nodeName : 'Node Inspector'}
+                        </span>
+                        {selectedNodeEDA && (
+                            <>
+                                <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-mono ${isDarkMode ? 'bg-zinc-800 text-zinc-400' : 'bg-zinc-100 text-zinc-500'}`}>{selectedNodeEDA.size} pts</span>
+                                <button onClick={() => setSelectedNodeEDA(null)} className={`ml-auto p-0.5 rounded hover:bg-zinc-700/50 transition-colors ${isDarkMode ? 'text-zinc-500 hover:text-zinc-300' : 'text-zinc-400 hover:text-zinc-700'}`}>
+                                    <X className="w-3 h-3" />
+                                </button>
+                            </>
+                        )}
+                    </div>
+                    {selectedNodeEDA ? (
+                        <div className="overflow-x-auto" style={{ scrollbarWidth: 'thin' }}>
+                            <div className="flex gap-3 px-4 py-3" style={{ minWidth: 'max-content' }}>
+                                {selectedNodeEDA.cols.map(col => {
+                                    if (col.type === 'categorical' && col.counts) {
+                                        const maxC = Math.max(...col.counts.map(c => c.count), 1);
+                                        const W = Math.max(80, col.counts.length * 26 + 16);
+                                        const H = 44, pad = 14;
+                                        const bw = (W - pad) / col.counts.length;
+                                        const COLORS = ['#3b82f6','#8b5cf6','#10b981','#f59e0b','#ef4444','#06b6d4','#ec4899'];
+                                        return (
+                                            <div key={col.name} className="flex flex-col items-start shrink-0">
+                                                <p className={`text-[8px] font-semibold mb-1 uppercase tracking-wider ${isDarkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>{col.name}</p>
+                                                <svg width={W} height={H + 18} className="overflow-visible">
+                                                    {col.counts.map((c, i) => {
+                                                        const bh = Math.max(2, (c.count / maxC) * H);
+                                                        const x = pad + i * bw;
+                                                        const y = H - bh;
+                                                        return (
+                                                            <g key={c.label}>
+                                                                <rect x={x + 1} y={y} width={bw - 3} height={bh} rx={2} fill={COLORS[i % COLORS.length]} opacity={0.85} />
+                                                                <text x={x + bw / 2} y={H + 9} textAnchor="middle" fontSize={6.5} fill={isDarkMode ? '#71717a' : '#9ca3af'} transform={`rotate(-30, ${x + bw/2}, ${H + 9})`}>{c.label.length > 7 ? c.label.slice(0,6)+'…' : c.label}</text>
+                                                                <text x={x + bw / 2} y={y - 2} textAnchor="middle" fontSize={7} fontWeight="600" fill={isDarkMode ? '#e4e4e7' : '#3f3f46'}>{c.count}</text>
+                                                            </g>
+                                                        );
+                                                    })}
+                                                    <line x1={pad} y1={0} x2={pad} y2={H} stroke={isDarkMode ? '#3f3f46' : '#e4e4e7'} strokeWidth={1} />
+                                                    <line x1={pad} y1={H} x2={W} y2={H} stroke={isDarkMode ? '#3f3f46' : '#e4e4e7'} strokeWidth={1} />
+                                                </svg>
+                                            </div>
+                                        );
+                                    } else if (col.type === 'numerical' && col.bins) {
+                                        const maxC = Math.max(...col.bins.map(b => b.count), 1);
+                                        const W = Math.max(80, col.bins.length * 24 + 16);
+                                        const H = 44, pad = 14;
+                                        const bw = (W - pad) / col.bins.length;
+                                        return (
+                                            <div key={col.name} className="flex flex-col items-start shrink-0">
+                                                <p className={`text-[8px] font-semibold mb-0.5 uppercase tracking-wider ${isDarkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>{col.name}</p>
+                                                <p className={`text-[8px] font-mono mb-0.5 ${isDarkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>μ={col.mean?.toFixed(1)}</p>
+                                                <svg width={W} height={H + 18} className="overflow-visible">
+                                                    {col.bins.map((b, i) => {
+                                                        const bh = Math.max(2, (b.count / maxC) * H);
+                                                        const x = pad + i * bw;
+                                                        const y = H - bh;
+                                                        return (
+                                                            <g key={i}>
+                                                                <rect x={x + 1} y={y} width={bw - 3} height={bh} rx={2} fill={'#3b82f6'} opacity={0.7 + 0.3 * (b.count / maxC)} />
+                                                                <text x={x + bw / 2} y={H + 9} textAnchor="middle" fontSize={6} fill={isDarkMode ? '#71717a' : '#9ca3af'}>{b.bin}</text>
+                                                                {b.count > 0 && <text x={x + bw / 2} y={y - 2} textAnchor="middle" fontSize={7} fontWeight="600" fill={isDarkMode ? '#e4e4e7' : '#3f3f46'}>{b.count}</text>}
+                                                            </g>
+                                                        );
+                                                    })}
+                                                    <line x1={pad} y1={0} x2={pad} y2={H} stroke={isDarkMode ? '#3f3f46' : '#e4e4e7'} strokeWidth={1} />
+                                                    <line x1={pad} y1={H} x2={W} y2={H} stroke={isDarkMode ? '#3f3f46' : '#e4e4e7'} strokeWidth={1} />
+                                                </svg>
+                                            </div>
+                                        );
+                                    }
+                                    return null;
+                                })}
+                            </div>
+                        </div>
+                    ) : (
+                        <div className={`flex-1 flex flex-col items-center justify-center px-4 py-5 gap-2 ${isDarkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>
+                            <svg className="w-6 h-6 opacity-40" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122" /></svg>
+                            <p className="text-[10px] text-center leading-relaxed">Click a node<br />to explore its data</p>
+                        </div>
+                    )}
+                </div>
             </div>
 
+            {/* Full Data Table: shows all originalData, positioned below left panel */}
+            {Array.isArray(data.originalData) && data.originalData.length > 0 && (() => {
+                const allRows = data.originalData as any[];
+                const headers = typeof allRows[0] === 'object' && allRows[0] !== null ? Object.keys(allRows[0]) : [];
+                if (!headers.length) return null;
+                return (
+                    <div
+                        className={`absolute z-[99] pointer-events-auto overflow-hidden rounded-xl border shadow-2xl ${isDarkMode ? 'bg-zinc-900/95 border-zinc-800 text-zinc-400' : 'bg-white/95 border-zinc-200 text-zinc-600'}`}
+                        style={{ left: '320px', right: '320px', bottom: '24px', maxHeight: '220px' }}
+                    >
+                        <div className={`flex items-center gap-2 px-4 py-2 border-b ${isDarkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
+                            <span className={`font-bold text-[10px] ${isDarkMode ? 'text-zinc-300' : 'text-zinc-700'}`}>Dataset</span>
+                            <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded ${isDarkMode ? 'bg-zinc-800 text-zinc-500' : 'bg-zinc-100 text-zinc-400'}`}>{allRows.length} rows · {headers.length} cols</span>
+                        </div>
+                        <div className="overflow-auto" style={{ maxHeight: '180px', scrollbarWidth: 'thin' as any }}>
+                            <table className="w-full text-[9px] border-collapse" style={{ minWidth: 'max-content' }}>
+                                <thead className={`sticky top-0 z-10 ${isDarkMode ? 'bg-zinc-800' : 'bg-zinc-100'}`}>
+                                    <tr>
+                                        <th className={`px-3 py-1.5 text-left font-semibold ${isDarkMode ? 'text-zinc-400' : 'text-zinc-500'}`} style={{ borderBottom: `1px solid ${isDarkMode ? '#3f3f46' : '#e4e4e7'}` }}>#</th>
+                                        {headers.map(h => (
+                                            <th key={h} className={`px-3 py-1.5 text-left font-semibold whitespace-nowrap ${isDarkMode ? 'text-zinc-400' : 'text-zinc-500'}`} style={{ borderBottom: `1px solid ${isDarkMode ? '#3f3f46' : '#e4e4e7'}` }}>{h}</th>
+                                        ))}
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {allRows.map((row: any, i: number) => (
+                                        <tr key={i} className={isDarkMode ? (i % 2 === 0 ? 'bg-zinc-900/60' : 'bg-zinc-800/30') : (i % 2 === 0 ? 'bg-white' : 'bg-zinc-50')}>
+                                            <td className={`px-3 py-1 font-mono ${isDarkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>{i}</td>
+                                            {headers.map(h => (
+                                                <td key={h} className={`px-3 py-1 font-mono whitespace-nowrap ${isDarkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>{String(row[h] ?? '')}</td>
+                                            ))}
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                );
+            })()}
             <div className="absolute bottom-4 left-4 z-10 pointer-events-none">
                 <p className={`${isDarkMode ? 'text-zinc-500' : 'text-zinc-400'} text-xs`}>
                     Left-click: Rotate • Right-click: Pan • Scroll: Zoom • Drag Node: Move
@@ -1103,6 +1367,7 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
                     backgroundColor={isDarkMode ? "#000000" : "#ffffff"}
                     showNavInfo={false}
                     onNodeDragEnd={handleNodeDragEnd}
+                    onNodeClick={handleNodeClick}
                     enablePointerInteraction={true}
                 />
             ) : (
@@ -1116,6 +1381,7 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
                     linkWidth={1}
                     backgroundColor={isDarkMode ? "#000000" : "#ffffff"}
                     onNodeDragEnd={handleNodeDragEnd}
+                    onNodeClick={handleNodeClick}
                     enablePointerInteraction={true}
                 />
             )}
