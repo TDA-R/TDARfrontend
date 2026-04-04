@@ -1,37 +1,45 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Sidebar } from '@/components/Sidebar';
 import { MapperGraph } from '@/components/MapperGraph';
 import { AboutModal } from '@/components/AboutModal';
+import { getExamples } from './actions';
 
 export default function Home() {
-    const [interval, setInterval] = useState(15);
-    const [overlap, setOverlap] = useState(30);
-    const [clusteringMethod, setClusteringMethod] = useState('dbscan');
     const [isAboutOpen, setIsAboutOpen] = useState(false);
-    const [sourceData, setSourceData] = useState<any[] | null>(null);
+    const [examples, setExamples] = useState<string[]>([]);
+    const [selectedExample, setSelectedExample] = useState<string>('');
+
+    useEffect(() => {
+        getExamples()
+            .then(files => {
+                const validFiles = files && Array.isArray(files) && files.length > 0 ? files : ['iris_mapper.json'];
+                setExamples(validFiles);
+                setSelectedExample(validFiles[0]);
+            })
+            .catch(err => {
+                console.error("Failed to load examples via Server Action:", err);
+                setExamples(['iris_mapper.json']);
+                setSelectedExample('iris_mapper.json');
+            });
+    }, []);
 
     return (
         <main className="h-screen w-full bg-black text-white overflow-hidden font-sans relative">
             <Sidebar
-                interval={interval}
-                setInterval={setInterval}
-                overlap={overlap}
-                setOverlap={setOverlap}
-                clusteringMethod={clusteringMethod}
-                setClusteringMethod={setClusteringMethod}
+                examples={examples}
+                selectedExample={selectedExample}
+                onSelectExample={setSelectedExample}
                 onAboutOpen={() => setIsAboutOpen(true)}
             />
             <div className="absolute inset-0">
-                <MapperGraph
-                    interval={interval}
-                    overlap={overlap}
-                    clusteringMethod={clusteringMethod}
-                    sourceData={sourceData}
-                    onDataUpload={setSourceData}
-                    
-                />
+                {selectedExample && (
+                    <MapperGraph
+                        selectedExample={selectedExample}
+                        onCustomUpload={() => setSelectedExample('custom')}
+                    />
+                )}
                 <AboutModal isOpen={isAboutOpen} onClose={() => setIsAboutOpen(false)} />
             </div>
         </main>

@@ -2,18 +2,14 @@ import React from 'react';
 import { Settings, Sliders, Activity, Layers } from 'lucide-react';
 
 interface SidebarProps {
-    interval: number;
-    setInterval: (value: number) => void;
-    overlap: number;
-    setOverlap: (value: number) => void;
-    clusteringMethod: string;
-    setClusteringMethod: (value: string) => void;
+    examples: string[];
+    selectedExample: string;
+    onSelectExample: (f: string) => void;
     onAboutOpen: () => void;
 }
 
 export function Sidebar({
-    interval, setInterval, overlap, setOverlap,
-    clusteringMethod, setClusteringMethod, onAboutOpen,
+    examples, selectedExample, onSelectExample, onAboutOpen,
 }: SidebarProps) {
     return (
         <div className="absolute top-6 bottom-6 left-6 z-[100] w-[280px] bg-zinc-900/95 backdrop-blur-xl border border-zinc-800 rounded-xl shadow-2xl text-zinc-100 flex flex-col p-4 gap-2 overflow-hidden">
@@ -34,50 +30,27 @@ export function Sidebar({
                 </button>
             </div>
 
-            {/* Parameters */}
+            {/* Dataset Selection */}
             <div className="space-y-2 shrink-0">
-                <div className="space-y-1.5">
-                    <div className="flex items-center justify-between">
-                        <label className="text-sm font-medium text-zinc-400 flex items-center gap-2">
-                            <Layers className="w-4 h-4" /> Interval
-                        </label>
-                        <span className="text-xs font-mono bg-zinc-800 px-2 py-1 rounded text-zinc-300">{interval}</span>
-                    </div>
-                    <input
-                        type="range" min="5" max="50" value={interval}
-                        onChange={(e) => setInterval(Number(e.target.value))}
-                        className="w-full h-2 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
-                    />
-                </div>
-
-                <div className="space-y-1.5">
-                    <div className="flex items-center justify-between">
-                        <label className="text-sm font-medium text-zinc-400 flex items-center gap-2">
-                            <Sliders className="w-4 h-4" /> Overlap
-                        </label>
-                        <span className="text-xs font-mono bg-zinc-800 px-2 py-1 rounded text-zinc-300">{overlap}%</span>
-                    </div>
-                    <input
-                        type="range" min="0" max="80" value={overlap}
-                        onChange={(e) => setOverlap(Number(e.target.value))}
-                        className="w-full h-2 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
-                    />
-                </div>
-
-                <div className="space-y-1.5">
-                    <label className="text-sm font-medium text-zinc-400 flex items-center gap-2">
-                        <Settings className="w-4 h-4" /> Clustering Method
-                    </label>
-                    <select
-                        value={clusteringMethod}
-                        onChange={(e) => setClusteringMethod(e.target.value)}
-                        className="w-full bg-zinc-800 border border-zinc-700 text-zinc-100 text-sm rounded-lg focus:ring-indigo-500 focus:border-indigo-500 block p-1.5 outline-none"
-                    >
-                        <option value="dbscan">DBSCAN</option>
-                        <option value="kmeans">K-Means</option>
-                        <option value="agglomerative">Agglomerative</option>
-                    </select>
-                </div>
+                <label className="text-sm font-medium text-zinc-400 flex items-center gap-2">
+                    <Layers className="w-4 h-4" /> Example Dataset
+                </label>
+                <select
+                    value={selectedExample === 'custom' ? 'custom' : selectedExample}
+                    onChange={(e) => onSelectExample(e.target.value)}
+                    className="w-full bg-zinc-800 border border-zinc-700 text-zinc-100 text-sm rounded-lg focus:ring-indigo-500 focus:border-indigo-500 block p-2 outline-none"
+                    disabled={selectedExample === 'custom'}
+                >
+                    {selectedExample === 'custom' && <option value="custom">[ Custom Uploaded File ]</option>}
+                    {examples.map(ex => (
+                        <option key={ex} value={ex}>{ex}</option>
+                    ))}
+                </select>
+                {selectedExample === 'custom' && (
+                    <button onClick={() => onSelectExample(examples[0] || '')} className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors">
+                        Reset to Example
+                    </button>
+                )}
             </div>
 
             {/* Controls injected from MapperGraph via portal */}

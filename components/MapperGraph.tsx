@@ -3,8 +3,7 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import dynamic from 'next/dynamic';
-import { useWebR } from './WebRProvider';
-import { runMapperAlgo } from '@/lib/r-script';
+import { parseMapperJson } from '@/lib/r-script';
 import { Download, Box, Square, Sun, Moon, Network, Play, ChevronDown, ChevronRight, Table2, BarChart2, X } from 'lucide-react';
 
 // Dynamically import ForceGraph3D with no SSR
@@ -46,16 +45,12 @@ interface GraphData {
 }
 
 interface MapperGraphProps {
-    interval: number;
-    overlap: number;
-    clusteringMethod: string;
-    sourceData: any[] | null;
-    onDataUpload: (data: any[]) => void;
-    onGraphStats?: (nodeCount: number, edgeCount: number) => void;
+    selectedExample: string;
+    onCustomUpload: () => void;
+    onGraphStats?: (stats: { nodes: number; edges: number } | null) => void;
 }
 
-export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, onDataUpload, onGraphStats }: MapperGraphProps) {
-    const { webR, isLoading: isWebRLoading } = useWebR();
+export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: MapperGraphProps) {
     const [data, setData] = useState<GraphData>({ nodes: [], links: [] });
     const [isComputing, setIsComputing] = useState(false);
     const [is3D, setIs3D] = useState(true);
@@ -161,62 +156,37 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
         });
     }, [data.originalData]);
 
-    // Manual trigger for running the toy model (Iris dataset)
-    const runToyModel = useCallback(async () => {
-        if (!webR || isWebRLoading || isComputing) return;
 
-        const reqId = ++computationIdRef.current;
-        setIsComputing(true);
-        console.log("Starting Toy Model (Iris) Mapper computation...");
+    const processMapperData = (json: any) => {
         try {
-            const graphData = await runMapperAlgo(webR, interval, overlap, clusteringMethod, null);
-            if (computationIdRef.current !== reqId) return;
-            console.log("Mapper computation result:", graphData);
+            const graphData = parseMapperJson(json);
             if (graphData) {
                 setData(graphData);
                 if (graphData.originalData) {
                     analyzeData(graphData.originalData);
                 }
             }
-        } catch (error) {
-            if (computationIdRef.current !== reqId) return;
-            console.error("Error running Mapper:", error);
-        } finally {
-            if (computationIdRef.current === reqId) {
-                setIsComputing(false);
-            }
+        } catch (e) {
+            console.error("Error processing mapper JSON", e);
         }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [webR, isWebRLoading, interval, overlap, clusteringMethod]);
+    };
 
-    // Auto-run when user uploads new data (sourceData changes)
-    const prevSourceDataRef = useRef<any[] | null>(null);
     useEffect(() => {
-        if (!webR || isWebRLoading || !sourceData) return;
-        if (sourceData === prevSourceDataRef.current) return;
-        prevSourceDataRef.current = sourceData;
-
-        const reqId = ++computationIdRef.current;
+        if (!selectedExample || selectedExample === 'custom') return;
+        
         setIsComputing(true);
-        console.log("Running Mapper on uploaded data...");
-        const computeGraph = async () => {
-            try {
-                const graphData = await runMapperAlgo(webR, interval, overlap, clusteringMethod, sourceData);
-                if (computationIdRef.current !== reqId) return;
-                if (graphData) {
-                    setData(graphData);
-                    if (graphData.originalData) analyzeData(graphData.originalData);
-                }
-            } catch (error) {
-                if (computationIdRef.current !== reqId) return;
-                console.error("Error running Mapper on uploaded data:", error);
-            } finally {
-                if (computationIdRef.current === reqId) setIsComputing(false);
-            }
-        };
-        const timer = setTimeout(computeGraph, 500);
-        return () => clearTimeout(timer);
-    }, [webR, isWebRLoading, sourceData, interval, overlap, clusteringMethod]);
+        fetch(`/example/${selectedExample}`)
+            .then(res => res.json())
+            .then(result => {
+                processMapperData(result);
+            })
+            .catch(err => {
+                console.error("Failed to load example:", err);
+            })
+            .finally(() => {
+                setIsComputing(false);
+            });
+    }, [selectedExample]);
 
     // Adjust Force Graph Simulation
     useEffect(() => {
@@ -519,7 +489,7 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
         }));
 
         setMapperStats({ nodeCount: nodes.length, edgeCount, avgClusterSize, maxClusterSize, connectedComponents, clusterSizeHist, degreeHist, labelDist: [] });
-        onGraphStats?.(nodes.length, edgeCount);
+        onGraphStats?.({ nodes: nodes.length, edges: edgeCount });
     }, [data.nodes, data.links]);
 
     // Compute label distribution from originalData (separate effect so it updates when data loads)
@@ -820,131 +790,13 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
 
         const reader = new FileReader();
         reader.onload = (e) => {
-            const text = e.target?.result as string;
             try {
-                const parsedData = JSON.parse(text);
-
-                // Check if it's a Mapper Output (has adjacency)
-                if (parsedData.adjacency && parsedData.level_of_vertex) {
-                    console.log("Detected Mapper Output JSON. Visualizing directly...");
-
-                    // Stop any ongoing computation
-                    computationIdRef.current++;
-                    setIsComputing(false);
-
-                    const numVertices = parsedData.num_vertices || parsedData.level_of_vertex.length;
-                    const nodes: any[] = [];
-
-                    // Helper to find dominant species (if original_data exists)
-                    const getSpecies = (indices: number[]) => {
-                        if (!indices || indices.length === 0 || !parsedData.original_data) return "unknown";
-
-                        const originalData = parsedData.original_data;
-                        const speciesCounts: Record<string, number> = {};
-
-                        indices.forEach(idx => {
-                            // R indices are 1-based
-                            let species = "unknown";
-                            if (Array.isArray(originalData)) {
-                                const row = originalData[idx - 1];
-                                if (row) species = row.Species || row.label || "unknown";
-                            }
-                            speciesCounts[species] = (speciesCounts[species] || 0) + 1;
-                        });
-
-                        const entries = Object.entries(speciesCounts);
-                        if (entries.length === 0) return "unknown";
-                        return entries.reduce((a, b) => a[1] > b[1] ? a : b)[0];
-                    };
-
-                    for (let i = 0; i < numVertices; i++) {
-                        let indices = parsedData.points_in_vertex[i];
-                        if (typeof indices === 'number') indices = [indices];
-                        if (!indices) indices = [];
-
-                        const level = parsedData.level_of_vertex[i];
-                        const size = indices.length;
-                        const id = `node_${i + 1}`;
-                        const species = getSpecies(indices);
-
-                        nodes.push({
-                            id: id,
-                            group: level,
-                            val: size,
-                            name: id,
-                            desc: `Cluster ${id} (Size: ${size}, Species: ${species})`,
-                            species: species,
-                            indices: indices
-                        });
-                    }
-
-                    const links: any[] = [];
-                    const adjacency = parsedData.adjacency;
-
-                    for (let i = 0; i < numVertices; i++) {
-                        for (let j = i + 1; j < numVertices; j++) {
-                            if (adjacency[i] && adjacency[i][j] === 1) {
-                                links.push({
-                                    source: nodes[i].id,
-                                    target: nodes[j].id,
-                                    value: 1
-                                });
-                            }
-                        }
-                    }
-
-                    const reverseLinks = links.map(link => ({
-                        source: link.target,
-                        target: link.source,
-                        value: link.value,
-                        isReverse: true
-                    }));
-
-                    // Normalize CC data (handle row-based array from R/JSON)
-                    let ccData = parsedData.cc;
-                    console.log("Raw CC Data:", ccData); // Log 1
-
-                    if (Array.isArray(ccData) && ccData.length > 0) {
-                        const firstRow = ccData[0];
-                        if (typeof firstRow === 'object') {
-                            console.log("Detected Array of Objects for CC. Transposing..."); // Log 2
-                            const newCC: Record<string, number[]> = {};
-                            Object.keys(firstRow).forEach(key => {
-                                newCC[key] = ccData.map((row: any) => row[key]);
-                            });
-                            ccData = newCC;
-                        }
-                    }
-                    console.log("Normalized CC Data:", ccData); // Log 3
-
-                    setData({
-                        nodes,
-                        links: [...links, ...reverseLinks],
-                        originalData: parsedData.original_data,
-                        rawNodes: nodes,
-                        adjacency: parsedData.adjacency,
-                        cc: ccData
-                    });
-
-                    if (parsedData.original_data || ccData) {
-                        // analyzeData(parsedData.original_data, ccData);
-                    }
-
-                } else {
-                    // Raw Data
-                    console.log("Detected Raw Data. Computing topology...");
-                    console.log("Uploaded Data Sample:", Array.isArray(parsedData) ? parsedData[0] : parsedData);
-
-                    // Set source data to trigger Mapper computation
-                    onDataUpload(parsedData);
-
-                    // Analyze columns immediately for coloring options
-                    analyzeData(parsedData);
-                }
-
-            } catch (error) {
-                console.error("Error parsing JSON:", error);
-                alert("Invalid JSON file");
+                const txt = e.target?.result as string;
+                let json = JSON.parse(txt);
+                onCustomUpload();
+                processMapperData(json);
+            } catch (err) {
+                console.error("Error parsing JSON file:", err);
             }
         };
         reader.readAsText(file);
@@ -958,23 +810,15 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
         return `hsl(${hue}, 70%, 50%)`;
     };
 
-    if (isWebRLoading) {
-        return (
-            <div className="h-full w-full bg-black flex flex-col items-center justify-center text-zinc-400">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white mb-4"></div>
-                <p>Initializing R Environment...</p>
-                <p className="text-xs text-zinc-600 mt-2">Downloading WebAssembly binaries</p>
-            </div>
-        );
-    }
+
 
     return (
         <div className={`h-full w-full relative overflow-hidden ${isDarkMode ? 'bg-black' : 'bg-white'}`}>
-            {isComputing && (
+    {isComputing && (
                 <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/80 backdrop-blur-sm">
                     <div className="bg-zinc-900/90 px-4 py-2 rounded-full border border-zinc-800 flex items-center gap-2">
                         <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white"></div>
-                        <span className="text-xs text-zinc-300">Computing Topology in R...</span>
+                        <span className="text-xs text-zinc-300">Processing Graph Data...</span>
                     </div>
                 </div>
             )}
@@ -1003,14 +847,6 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
                     )}
 
                     <div style={{ width: '100%' }} className={`pt-3 border-t space-y-2.5 ${isDarkMode ? 'border-zinc-700' : 'border-zinc-200'}`}>
-                        <button
-                            onClick={runToyModel}
-                            disabled={isComputing || isWebRLoading || !!sourceData}
-                            className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-lg transition-all border font-medium active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed ${isDarkMode ? 'bg-blue-600 hover:bg-blue-500 text-white border-blue-500 hover:border-blue-400' : 'bg-blue-500 hover:bg-blue-600 text-white border-blue-400 hover:border-blue-500'}`}
-                        >
-                            <Play className="w-3.5 h-3.5" />
-                            Run Toy Model (Iris)
-                        </button>
 
                         <button
                             onClick={() => setIs3D(!is3D)}
@@ -1236,8 +1072,8 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
                         )}
                     </div>
                     {selectedNodeEDA ? (
-                        <div className="overflow-x-auto" style={{ scrollbarWidth: 'thin' }}>
-                            <div className="flex gap-3 px-4 py-3" style={{ minWidth: 'max-content' }}>
+                        <div className="overflow-y-auto overflow-x-hidden flex-1" style={{ scrollbarWidth: 'thin', minHeight: 0 }}>
+                            <div className="flex flex-col gap-6 px-4 py-3">
                                 {selectedNodeEDA.cols.map(col => {
                                     if (col.type === 'categorical' && col.counts) {
                                         const maxC = Math.max(...col.counts.map(c => c.count), 1);
@@ -1307,45 +1143,7 @@ export function MapperGraph({ interval, overlap, clusteringMethod, sourceData, o
                 </div>
             </div>
 
-            {/* Full Data Table: shows all originalData, positioned below left panel */}
-            {Array.isArray(data.originalData) && data.originalData.length > 0 && (() => {
-                const allRows = data.originalData as any[];
-                const headers = typeof allRows[0] === 'object' && allRows[0] !== null ? Object.keys(allRows[0]) : [];
-                if (!headers.length) return null;
-                return (
-                    <div
-                        className={`absolute z-[99] pointer-events-auto overflow-hidden rounded-xl border shadow-2xl ${isDarkMode ? 'bg-zinc-900/95 border-zinc-800 text-zinc-400' : 'bg-white/95 border-zinc-200 text-zinc-600'}`}
-                        style={{ left: '320px', right: '320px', bottom: '24px', maxHeight: '220px' }}
-                    >
-                        <div className={`flex items-center gap-2 px-4 py-2 border-b ${isDarkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
-                            <span className={`font-bold text-[10px] ${isDarkMode ? 'text-zinc-300' : 'text-zinc-700'}`}>Dataset</span>
-                            <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded ${isDarkMode ? 'bg-zinc-800 text-zinc-500' : 'bg-zinc-100 text-zinc-400'}`}>{allRows.length} rows · {headers.length} cols</span>
-                        </div>
-                        <div className="overflow-auto" style={{ maxHeight: '180px', scrollbarWidth: 'thin' as any }}>
-                            <table className="w-full text-[9px] border-collapse" style={{ minWidth: 'max-content' }}>
-                                <thead className={`sticky top-0 z-10 ${isDarkMode ? 'bg-zinc-800' : 'bg-zinc-100'}`}>
-                                    <tr>
-                                        <th className={`px-3 py-1.5 text-left font-semibold ${isDarkMode ? 'text-zinc-400' : 'text-zinc-500'}`} style={{ borderBottom: `1px solid ${isDarkMode ? '#3f3f46' : '#e4e4e7'}` }}>#</th>
-                                        {headers.map(h => (
-                                            <th key={h} className={`px-3 py-1.5 text-left font-semibold whitespace-nowrap ${isDarkMode ? 'text-zinc-400' : 'text-zinc-500'}`} style={{ borderBottom: `1px solid ${isDarkMode ? '#3f3f46' : '#e4e4e7'}` }}>{h}</th>
-                                        ))}
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {allRows.map((row: any, i: number) => (
-                                        <tr key={i} className={isDarkMode ? (i % 2 === 0 ? 'bg-zinc-900/60' : 'bg-zinc-800/30') : (i % 2 === 0 ? 'bg-white' : 'bg-zinc-50')}>
-                                            <td className={`px-3 py-1 font-mono ${isDarkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>{i}</td>
-                                            {headers.map(h => (
-                                                <td key={h} className={`px-3 py-1 font-mono whitespace-nowrap ${isDarkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>{String(row[h] ?? '')}</td>
-                                            ))}
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                );
-            })()}
+
             <div className="absolute bottom-4 left-4 z-10 pointer-events-none">
                 <p className={`${isDarkMode ? 'text-zinc-500' : 'text-zinc-400'} text-xs`}>
                     Left-click: Rotate • Right-click: Pan • Scroll: Zoom • Drag Node: Move
