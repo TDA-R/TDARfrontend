@@ -1,7 +1,5 @@
 # TDA-R Mapper
 
-![TDA-R Mapper Preview](public/example.png)
-
 ```r
 
 library(jsonlite)
@@ -11,6 +9,7 @@ export_data <- list(
   num_vertices = Mapper$num_vertices,
   level_of_vertex = Mapper$level_of_vertex,
   points_in_vertex = Mapper$points_in_vertex,
+  input_params = Mapper$input_params,
   original_data = as.data.frame(all_features)
 )
 write(toJSON(export_data, auto_unbox = TRUE), "~/desktop/iris.json")

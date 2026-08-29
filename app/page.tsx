@@ -26,7 +26,7 @@ export default function Home() {
     }, []);
 
     return (
-        <main className="h-screen w-full bg-black text-white overflow-hidden font-sans relative">
+        <main className="h-screen w-full bg-[#2c1e17] text-[#fbf5f0] overflow-hidden font-sans relative">
             <Sidebar
                 examples={examples}
                 selectedExample={selectedExample}
