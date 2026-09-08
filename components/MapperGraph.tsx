@@ -7,7 +7,7 @@ import { parseMapperJson, validateMapperJson, MapperFormatError, checkMapperWarn
 import { JsonErrorModal, JsonErrorInfo } from './JsonErrorModal';
 import { JsonWarningModal, JsonWarningInfo } from './JsonWarningModal';
 import { TypeSwitchErrorModal, TypeSwitchErrorInfo } from './TypeSwitchErrorModal';
-import { Download, Box, Square, Play, ChevronDown, ChevronRight, Table2, BarChart2, X, ArrowRightLeft } from 'lucide-react';
+import { Download, Box, Square, Layers, ChevronDown, ChevronRight, BarChart2, X, ArrowRightLeft } from 'lucide-react';
 
 // Dynamically import ForceGraph3D with no SSR
 const ForceGraph3D = dynamic(() => import('react-force-graph-3d'), {
@@ -83,17 +83,14 @@ const colorScale = (val: string, uniqueList?: string[]) => {
         if (idx >= 0 && idx < CATEGORICAL_PALETTE.length) {
             return CATEGORICAL_PALETTE[idx];
         } else if (idx >= 0) {
-            // Golden angle (137.5 deg) ensures adjacent categories are maximally separated
             const hue = Math.round((idx * 137.5) % 360);
             return `hsl(${hue}, 75%, 52%)`;
         }
     }
-    // If val is a single digit or integer index
     const num = Number(val);
     if (!isNaN(num) && Number.isInteger(num) && num >= 0 && num < CATEGORICAL_PALETTE.length) {
         return CATEGORICAL_PALETTE[num];
     }
-    // Hash using prime multiplier & golden angle for high contrast
     const hash = val.split('').reduce((acc, char) => (acc * 31 + char.charCodeAt(0)) % 1000000, 0);
     const hue = Math.abs(hash * 137.5) % 360;
     return `hsl(${hue}, 75%, 52%)`;
@@ -112,14 +109,47 @@ const formatParamValue = (val: any): string => {
     return String(val);
 };
 
+// Helper to robustly extract a row from originalData using dual 1-based and 0-based indexing
+const getRowFromData = (idx: number, originalData: any) => {
+    if (!originalData) return undefined;
+    const numIdx = typeof idx === 'number' ? idx : parseInt(String(idx), 10);
+    if (isNaN(numIdx)) return undefined;
+
+    if (Array.isArray(originalData)) {
+        if (originalData[numIdx - 1] !== undefined && originalData[numIdx - 1] !== null) return originalData[numIdx - 1];
+        if (originalData[numIdx] !== undefined && originalData[numIdx] !== null) return originalData[numIdx];
+        return undefined;
+    } else if (typeof originalData === 'object' && originalData !== null) {
+        const keys = Object.keys(originalData);
+        if (!keys.length) return undefined;
+        const rowObj: Record<string, any> = {};
+        let hasAny = false;
+        keys.forEach(k => {
+            const arr = originalData[k];
+            if (Array.isArray(arr)) {
+                if (arr[numIdx - 1] !== undefined && arr[numIdx - 1] !== null) {
+                    rowObj[k] = arr[numIdx - 1];
+                    hasAny = true;
+                } else if (arr[numIdx] !== undefined && arr[numIdx] !== null) {
+                    rowObj[k] = arr[numIdx];
+                    hasAny = true;
+                }
+            }
+        });
+        return hasAny ? rowObj : undefined;
+    }
+    return undefined;
+};
+
 export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: MapperGraphProps) {
     const [data, setData] = useState<GraphData>({ nodes: [], links: [] });
     const [isComputing, setIsComputing] = useState(false);
     const [is3D, setIs3D] = useState(true);
-    const computationIdRef = useRef(0);
     const fgRef = useRef<any>(null);
+    const containerRef = useRef<HTMLDivElement | null>(null);
     const portalSlotRef = useRef<HTMLElement | null>(null);
     const [portalReady, setPortalReady] = useState(false);
+
     useEffect(() => {
         const el = document.getElementById('sidebar-controls-slot');
         if (el) { portalSlotRef.current = el; setPortalReady(true); }
@@ -149,44 +179,142 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
     const [uploadWarnings, setUploadWarnings] = useState<JsonWarningInfo | null>(null);
     const [typeSwitchError, setTypeSwitchError] = useState<TypeSwitchErrorInfo | null>(null);
 
-    // Node EDA State
+    // Resizable Right Panel Splitters State
+    const [legendHeight, setLegendHeight] = useState<number>(85);
+    const [analyticsHeight, setAnalyticsHeight] = useState<number>(260);
+    const [activeSplitter, setActiveSplitter] = useState<'legend' | 'analytics' | null>(null);
+    const dragStartYRef = useRef<number>(0);
+    const dragStartHeightRef = useRef<number>(0);
+
+    const handleSplitterDown = (type: 'legend' | 'analytics', e: React.PointerEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setActiveSplitter(type);
+        dragStartYRef.current = e.clientY;
+        dragStartHeightRef.current = type === 'legend' ? legendHeight : analyticsHeight;
+    };
+
+    useEffect(() => {
+        if (!activeSplitter) return;
+
+        const handlePointerMove = (e: PointerEvent) => {
+            const delta = e.clientY - dragStartYRef.current;
+            if (activeSplitter === 'legend') {
+                const next = Math.max(50, Math.min(260, dragStartHeightRef.current + delta));
+                setLegendHeight(next);
+            } else if (activeSplitter === 'analytics') {
+                const next = Math.max(80, Math.min(600, dragStartHeightRef.current + delta));
+                setAnalyticsHeight(next);
+            }
+        };
+
+        const handlePointerUp = () => {
+            setActiveSplitter(null);
+        };
+
+        window.addEventListener('pointermove', handlePointerMove);
+        window.addEventListener('pointerup', handlePointerUp);
+        return () => {
+            window.removeEventListener('pointermove', handlePointerMove);
+            window.removeEventListener('pointerup', handlePointerUp);
+        };
+    }, [activeSplitter, legendHeight, analyticsHeight]);
+
+    // Multi-Node Selection State
+    const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
+
+    // Shift Box Drag Selection State
+    const [isShiftKey, setIsShiftKey] = useState(false);
+    const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null);
+    const [dragCurrent, setDragCurrent] = useState<{ x: number; y: number } | null>(null);
+    const isSelectingRef = useRef(false);
+    const isRightDraggingRef = useRef(false);
+    const rightDragPosRef = useRef<{ x: number; y: number } | null>(null);
+
+    // Node / Group EDA State
     interface ColDist {
         name: string;
         type: 'categorical' | 'numerical';
-        // categorical
         counts?: { label: string; count: number }[];
-        // numerical
         bins?: { bin: string; lo: number; hi: number; count: number }[];
-        min?: number; max?: number; mean?: number;
+        min?: number;
+        max?: number;
+        mean?: number;
     }
-    interface NodeEDA {
-        nodeId: string;
+    interface GroupEDA {
+        nodeIds: string[];
+        isGroup: boolean;
         nodeName: string;
-        size: number;
+        nodeCount: number;
+        uniquePoints: number;
+        totalPoints: number;
         cols: ColDist[];
     }
-    const [selectedNodeEDA, setSelectedNodeEDA] = useState<NodeEDA | null>(null);
+    const [selectedGroupEDA, setSelectedGroupEDA] = useState<GroupEDA | null>(null);
 
-    // Node click → EDA
-    const handleNodeClick = useCallback((node: any) => {
-        const originalData = data.originalData as any[] | undefined;
-        if (!originalData || !originalData.length) {
-            setSelectedNodeEDA({
-                nodeId: node.id,
-                nodeName: node.name || node.id,
-                size: Array.isArray(node.indices) ? node.indices.length : (node.val || 1),
+    // Compute aggregated EDA for selected node IDs
+    const computeEDAForNodes = useCallback((nodeIds: string[]): GroupEDA | null => {
+        if (!nodeIds || nodeIds.length === 0) return null;
+        const selectedNodes = data.nodes.filter(n => nodeIds.includes(n.id));
+        if (selectedNodes.length === 0) return null;
+
+        const isGroup = selectedNodes.length > 1;
+        const nodeName = isGroup 
+            ? `Group Selection (${selectedNodes.length} nodes)`
+            : (selectedNodes[0].name || selectedNodes[0].id);
+
+        // Collect all point indices
+        const allIndicesList: number[] = [];
+        selectedNodes.forEach(node => {
+            const raw = node.indices;
+            if (Array.isArray(raw)) allIndicesList.push(...raw);
+            else if (typeof raw === 'number') allIndicesList.push(raw);
+        });
+
+        const uniqueIndices = Array.from(new Set(allIndicesList));
+        const totalPoints = allIndicesList.length;
+        const uniquePoints = uniqueIndices.length || (selectedNodes.reduce((acc, n) => acc + (n.val || 1), 0));
+
+        const originalData = data.originalData;
+        if (!originalData) {
+            return {
+                nodeIds,
+                isGroup,
+                nodeName,
+                nodeCount: selectedNodes.length,
+                uniquePoints,
+                totalPoints,
                 cols: [],
-            });
-            return;
+            };
         }
-        const indices: number[] = Array.isArray(node.indices) ? node.indices : [];
-        const rows = indices.length > 0
-            ? indices.map(i => originalData[i]).filter(Boolean)
-            : [];
-        if (!rows.length) return;
+
+        // Extract rows for all unique indices
+        const rows = uniqueIndices.map(idx => getRowFromData(idx, originalData)).filter(Boolean);
+        if (!rows.length) {
+            return {
+                nodeIds,
+                isGroup,
+                nodeName,
+                nodeCount: selectedNodes.length,
+                uniquePoints,
+                totalPoints,
+                cols: [],
+            };
+        }
 
         const firstRow = rows[0];
-        if (typeof firstRow !== 'object' || firstRow === null) return;
+        if (typeof firstRow !== 'object' || firstRow === null) {
+            return {
+                nodeIds,
+                isGroup,
+                nodeName,
+                nodeCount: selectedNodes.length,
+                uniquePoints,
+                totalPoints,
+                cols: [],
+            };
+        }
+
         const keys = Object.keys(firstRow);
 
         const cols: ColDist[] = keys.map(key => {
@@ -223,22 +351,293 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
             }
         });
 
-        setSelectedNodeEDA({
-            nodeId: node.id,
-            nodeName: node.name || node.id,
-            size: rows.length,
+        return {
+            nodeIds,
+            isGroup,
+            nodeName,
+            nodeCount: selectedNodes.length,
+            uniquePoints,
+            totalPoints,
             cols,
-        });
-    }, [data.originalData, columns]);
+        };
+    }, [data.nodes, data.originalData, columns]);
 
+    // Recalculate group EDA whenever selectedNodeIds changes
+    useEffect(() => {
+        if (selectedNodeIds.size === 0) {
+            setSelectedGroupEDA(null);
+        } else {
+            const eda = computeEDAForNodes(Array.from(selectedNodeIds));
+            setSelectedGroupEDA(eda);
+        }
+    }, [selectedNodeIds, computeEDAForNodes]);
+
+    // Keyboard listener for Shift key state & window blur
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key === 'Shift') {
+                setIsShiftKey(true);
+                if (is3D && fgRef.current?.controls) {
+                    const ctrl = fgRef.current.controls();
+                    if (ctrl) ctrl.enabled = false;
+                }
+            }
+        };
+
+        const handleKeyUp = (e: KeyboardEvent) => {
+            if (e.key === 'Shift') {
+                setIsShiftKey(false);
+                if (is3D && fgRef.current?.controls && !isSelectingRef.current) {
+                    const ctrl = fgRef.current.controls();
+                    if (ctrl) ctrl.enabled = true;
+                }
+            }
+        };
+
+        const handleBlur = () => {
+            setIsShiftKey(false);
+            if (is3D && fgRef.current?.controls) {
+                const ctrl = fgRef.current.controls();
+                if (ctrl) ctrl.enabled = true;
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        window.addEventListener('keyup', handleKeyUp);
+        window.addEventListener('blur', handleBlur);
+        return () => {
+            window.removeEventListener('keydown', handleKeyDown);
+            window.removeEventListener('keyup', handleKeyUp);
+            window.removeEventListener('blur', handleBlur);
+        };
+    }, [is3D]);
+
+    // Event Capture Handlers for Shift-Drag Box Selection & Right-Click Pan
+    const handlePointerDownCapture = (e: React.PointerEvent<HTMLDivElement>) => {
+        if (e.shiftKey) {
+            e.preventDefault();
+            e.stopPropagation();
+            isSelectingRef.current = true;
+            setDragStart({ x: e.clientX, y: e.clientY });
+            setDragCurrent({ x: e.clientX, y: e.clientY });
+
+            if (is3D && fgRef.current?.controls) {
+                const ctrl = fgRef.current.controls();
+                if (ctrl) ctrl.enabled = false;
+            }
+        } else if (e.button === 2) {
+            // Right-click drag to pan (move entire canvas)
+            isRightDraggingRef.current = true;
+            rightDragPosRef.current = { x: e.clientX, y: e.clientY };
+        }
+    };
+
+    const handlePointerMoveCapture = (e: React.PointerEvent<HTMLDivElement>) => {
+        if (isSelectingRef.current && dragStart) {
+            e.preventDefault();
+            e.stopPropagation();
+            setDragCurrent({ x: e.clientX, y: e.clientY });
+        } else if (isRightDraggingRef.current && rightDragPosRef.current) {
+            if (!is3D && fgRef.current?.screen2GraphCoords && fgRef.current?.centerAt && containerRef.current) {
+                const dx = e.clientX - rightDragPosRef.current.x;
+                const dy = e.clientY - rightDragPosRef.current.y;
+                rightDragPosRef.current = { x: e.clientX, y: e.clientY };
+                const rect = containerRef.current.getBoundingClientRect();
+                const newCenter = fgRef.current.screen2GraphCoords(rect.width / 2 - dx, rect.height / 2 - dy);
+                if (newCenter) {
+                    fgRef.current.centerAt(newCenter.x, newCenter.y, 0);
+                }
+            }
+        }
+    };
+
+    const handlePointerUpCapture = (e: React.PointerEvent<HTMLDivElement>) => {
+        if (isRightDraggingRef.current || e.button === 2) {
+            isRightDraggingRef.current = false;
+            rightDragPosRef.current = null;
+        }
+
+        if (isSelectingRef.current && dragStart && dragCurrent && containerRef.current) {
+            e.preventDefault();
+            e.stopPropagation();
+
+            const rawDeltaX = dragCurrent.x - dragStart.x;
+            const rawDeltaY = dragCurrent.y - dragStart.y;
+            const squareSize = Math.max(Math.abs(rawDeltaX), Math.abs(rawDeltaY));
+
+            const minScreenX = rawDeltaX >= 0 ? dragStart.x : dragStart.x - squareSize;
+            const maxScreenX = minScreenX + squareSize;
+            const minScreenY = rawDeltaY >= 0 ? dragStart.y : dragStart.y - squareSize;
+            const maxScreenY = minScreenY + squareSize;
+
+            const rect = containerRef.current.getBoundingClientRect();
+
+            // Case 1: Marquee Box Drag Selection (>= 4px)
+            if (squareSize >= 4) {
+                const boxLeft = minScreenX - rect.left;
+                const boxRight = maxScreenX - rect.left;
+                const boxTop = minScreenY - rect.top;
+                const boxBottom = maxScreenY - rect.top;
+
+                const matchingNodeIds: string[] = [];
+
+                if (is3D) {
+                    const camera = fgRef.current?.camera?.();
+                    const THREE = typeof window !== 'undefined' ? (window as any).THREE || require('three') : null;
+
+                    if (camera && THREE) {
+                        const candidates: { id: string; dist: number }[] = [];
+                        data.nodes.forEach((node: any) => {
+                            if (typeof node.x === 'number' && typeof node.y === 'number' && typeof node.z === 'number') {
+                                const pos = new THREE.Vector3(node.x, node.y, node.z);
+                                const v = pos.clone();
+                                v.project(camera);
+                                const sx = ((v.x + 1) / 2) * rect.width;
+                                const sy = ((-v.y + 1) / 2) * rect.height;
+                                if (v.z < 1 && sx >= boxLeft && sx <= boxRight && sy >= boxTop && sy <= boxBottom) {
+                                    const dist = camera.position.distanceTo(pos);
+                                    candidates.push({ id: node.id, dist });
+                                }
+                            }
+                        });
+
+                        if (candidates.length > 0) {
+                            // Sort candidate nodes by distance to camera (front to back)
+                            candidates.sort((a, b) => a.dist - b.dist);
+
+                            // Isolate the visible front cluster (prevent punching through to distant background nodes)
+                            const MAX_DEPTH_GAP = 55;
+                            const clusterNodeIds: string[] = [candidates[0].id];
+                            for (let i = 1; i < candidates.length; i++) {
+                                if (candidates[i].dist - candidates[i - 1].dist <= MAX_DEPTH_GAP) {
+                                    clusterNodeIds.push(candidates[i].id);
+                                } else {
+                                    // Stop at the first significant depth gap
+                                    break;
+                                }
+                            }
+                            matchingNodeIds.push(...clusterNodeIds);
+                        }
+                    }
+                } else {
+                    // 2D Canvas space projection
+                    data.nodes.forEach((node: any) => {
+                        if (typeof node.x === 'number' && typeof node.y === 'number') {
+                            if (fgRef.current?.graph2ScreenCoords) {
+                                const screenCoord = fgRef.current.graph2ScreenCoords(node.x, node.y);
+                                if (screenCoord && screenCoord.x >= boxLeft && screenCoord.x <= boxRight && screenCoord.y >= boxTop && screenCoord.y <= boxBottom) {
+                                    matchingNodeIds.push(node.id);
+                                }
+                            }
+                        }
+                    });
+                }
+
+                if (matchingNodeIds.length > 0) {
+                    setSelectedNodeIds(new Set(matchingNodeIds));
+                }
+            } else {
+                // Case 2: Shift + Single Click (Toggle single node under cursor)
+                const clickX = minScreenX - rect.left;
+                const clickY = minScreenY - rect.top;
+                let clickedNodeId: string | null = null;
+
+                if (is3D) {
+                    const camera = fgRef.current?.camera?.();
+                    const THREE = typeof window !== 'undefined' ? (window as any).THREE || require('three') : null;
+                    if (camera && THREE) {
+                        let minDist = 24;
+                        data.nodes.forEach((node: any) => {
+                            if (typeof node.x === 'number' && typeof node.y === 'number' && typeof node.z === 'number') {
+                                const v = new THREE.Vector3(node.x, node.y, node.z);
+                                v.project(camera);
+                                if (v.z < 1) {
+                                    const sx = ((v.x + 1) / 2) * rect.width;
+                                    const sy = ((-v.y + 1) / 2) * rect.height;
+                                    const dist = Math.hypot(sx - clickX, sy - clickY);
+                                    if (dist < minDist) {
+                                        minDist = dist;
+                                        clickedNodeId = node.id;
+                                    }
+                                }
+                            }
+                        });
+                    }
+                } else {
+                    let minDist = 20;
+                    data.nodes.forEach((node: any) => {
+                        if (typeof node.x === 'number' && typeof node.y === 'number') {
+                            if (fgRef.current?.graph2ScreenCoords) {
+                                const sc = fgRef.current.graph2ScreenCoords(node.x, node.y);
+                                if (sc) {
+                                    const dist = Math.hypot(sc.x - clickX, sc.y - clickY);
+                                    if (dist < minDist) {
+                                        minDist = dist;
+                                        clickedNodeId = node.id;
+                                    }
+                                }
+                            }
+                        }
+                    });
+                }
+
+                if (clickedNodeId) {
+                    const targetId = clickedNodeId;
+                    setSelectedNodeIds(prev => {
+                        const next = new Set(prev);
+                        if (next.has(targetId)) next.delete(targetId);
+                        else next.add(targetId);
+                        return next;
+                    });
+                }
+            }
+
+            isSelectingRef.current = false;
+            setDragStart(null);
+            setDragCurrent(null);
+
+            if (is3D && fgRef.current?.controls) {
+                const ctrl = fgRef.current.controls();
+                if (ctrl && !e.shiftKey) ctrl.enabled = true;
+            }
+        }
+    };
+
+    // Regular Node click handler (when clicking directly without Shift)
+    const handleNodeClick = useCallback((node: any, event?: any) => {
+        if (event?.button === 2) return;
+        const isShift = event?.shiftKey || isShiftKey;
+        if (isShift) {
+            setSelectedNodeIds(prev => {
+                const next = new Set(prev);
+                if (next.has(node.id)) {
+                    next.delete(node.id);
+                } else {
+                    next.add(node.id);
+                }
+                return next;
+            });
+        } else {
+            setSelectedNodeIds(new Set([node.id]));
+        }
+    }, [isShiftKey]);
+
+    // Background click handler (clears selection when clicking blank canvas)
+    const handleBackgroundClick = useCallback((event?: any) => {
+        if (event?.button === 2) return;
+        if (!isSelectingRef.current && !isShiftKey) {
+            setSelectedNodeIds(new Set());
+        }
+    }, [isShiftKey]);
 
     const processMapperData = (json: any) => {
         try {
             const graphData = parseMapperJson(json);
             if (graphData) {
                 setData(graphData);
+                setSelectedNodeIds(new Set());
                 if (graphData.originalData) {
-                    analyzeData(graphData.originalData);
+                    analyzeData(graphData.originalData, graphData.cc);
                 }
             }
         } catch (e: any) {
@@ -274,10 +673,8 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
     useEffect(() => {
         if (!fgRef.current) return;
 
-        // Add a small delay to ensure graph is initialized
         const timer = setTimeout(() => {
             if (fgRef.current) {
-                // Configure 3D Camera Controls & Lighting for high-end aesthetic
                 if (is3D) {
                     if (fgRef.current.controls) {
                         const controls = fgRef.current.controls();
@@ -285,6 +682,9 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
                             controls.enableDamping = true;
                             controls.dampingFactor = 0.08;
                             controls.rotateSpeed = 0.8;
+                            controls.enablePan = true;
+                            controls.screenSpacePanning = true;
+                            controls.panSpeed = 1.0;
                         }
                     }
 
@@ -294,21 +694,17 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
                             try {
                                 const THREE = typeof window !== 'undefined' ? (window as any).THREE || require('three') : null;
                                 if (THREE) {
-                                    // Ambient hemisphere light
                                     const hemiLight = new THREE.HemisphereLight(0xfff5ea, 0x2c1e17, 1.2);
                                     scene.add(hemiLight);
 
-                                    // Key light (warm bright highlight)
                                     const keyLight = new THREE.DirectionalLight(0xfff0dd, 1.5);
                                     keyLight.position.set(120, 160, 100);
                                     scene.add(keyLight);
 
-                                    // Fill light (cool contrast)
                                     const fillLight = new THREE.DirectionalLight(0xb4d2ff, 0.7);
                                     fillLight.position.set(-120, -60, -100);
                                     scene.add(fillLight);
 
-                                    // Rim light (accentuate sphere contours)
                                     const rimLight = new THREE.DirectionalLight(0xe5b88f, 1.1);
                                     rimLight.position.set(0, -140, 80);
                                     scene.add(rimLight);
@@ -320,22 +716,21 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
                     }
                 }
 
-                // Increase link distance (Edge length)
                 if (fgRef.current.d3Force) {
                     const linkForce = fgRef.current.d3Force('link');
                     if (linkForce) {
-                        linkForce.distance(50); // Fixed distance
+                        linkForce.distance(50);
                     }
 
                     const chargeForce = fgRef.current.d3Force('charge');
-                    if (chargeForce) chargeForce.strength(-120); // More repulsion
+                    if (chargeForce) chargeForce.strength(-120);
 
                     if (fgRef.current.d3ReheatSimulation) {
                         fgRef.current.d3ReheatSimulation();
                     }
                 }
             }
-        }, 300); // Wait for render
+        }, 300);
 
         return () => clearTimeout(timer);
     }, [data, is3D]);
@@ -355,7 +750,6 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
             const firstRow = data[0];
             if (typeof firstRow === 'object') {
                 Object.keys(firstRow).forEach(key => {
-                    // Avoid duplicates if key matches cc
                     if (cols.find(c => c.name === key)) return;
 
                     const val = firstRow[key];
@@ -367,7 +761,6 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
 
         setColumns(cols);
 
-        // Default to first numerical column or first column if not set
         if (!selectedColumn) {
             const defaultCol = cols.find(c => c.type === 'numerical')?.name || cols[0]?.name;
             if (defaultCol) setSelectedColumn(defaultCol);
@@ -375,22 +768,106 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
     };
 
     const handleNodeDragEnd = useCallback((node: any) => {
-        // Lock the node position after dragging
         node.fx = node.x;
         node.fy = node.y;
         node.fz = node.z;
     }, []);
 
-    // Refresh graph immediately when selected node changes
+    // Refresh graph immediately when selected nodes change
     useEffect(() => {
         if (fgRef.current?.refresh) {
             fgRef.current.refresh();
         }
-    }, [selectedNodeEDA]);
+    }, [selectedNodeIds]);
 
-    // Custom 3D Object for Selected Node (Black Outer Ring / Precision Orbit)
+    // 3D Bounding Box / Cube Mesh for Group Selection (Clean, Sleek, No Whisker Lines)
+    useEffect(() => {
+        if (!is3D || !fgRef.current) return;
+        const scene = fgRef.current.scene?.();
+        if (!scene) return;
+
+        // Clean up previous 3D bounding group mesh
+        if (scene.userData.groupSelectionCube) {
+            scene.remove(scene.userData.groupSelectionCube);
+            scene.userData.groupSelectionCube = null;
+        }
+
+        if (selectedNodeIds.size === 0) return;
+
+        try {
+            const THREE = typeof window !== 'undefined' ? (window as any).THREE || require('three') : null;
+            if (!THREE) return;
+
+            const selectedNodes = data.nodes.filter(n => selectedNodeIds.has(n.id));
+            let minX = Infinity, maxX = -Infinity;
+            let minY = Infinity, maxY = -Infinity;
+            let minZ = Infinity, maxZ = -Infinity;
+            let validCount = 0;
+
+            selectedNodes.forEach((n: any) => {
+                if (typeof n.x === 'number' && typeof n.y === 'number' && typeof n.z === 'number') {
+                    const r = (Math.cbrt(n.val || 1) * 3.5) + 1.2;
+                    minX = Math.min(minX, n.x - r);
+                    maxX = Math.max(maxX, n.x + r);
+                    minY = Math.min(minY, n.y - r);
+                    maxY = Math.max(maxY, n.y + r);
+                    minZ = Math.min(minZ, n.z - r);
+                    maxZ = Math.max(maxZ, n.z + r);
+                    validCount++;
+                }
+            });
+
+            if (validCount === 0) return;
+
+            const pad = 3;
+            const maxSpan = Math.max(maxX - minX, maxY - minY, maxZ - minZ);
+            const cubeSide = Math.max(maxSpan + pad * 2, 10);
+            const cx = (minX + maxX) / 2;
+            const cy = (minY + maxY) / 2;
+            const cz = (minZ + maxZ) / 2;
+
+            const cubeGroup = new THREE.Group();
+            cubeGroup.position.set(cx, cy, cz);
+
+            // 1. Translucent warm volumetric fill (Equilateral 3D Cube)
+            const boxGeom = new THREE.BoxGeometry(cubeSide, cubeSide, cubeSide);
+            const boxMat = new THREE.MeshStandardMaterial({
+                color: 0xd49b6a,
+                transparent: true,
+                opacity: 0.15,
+                roughness: 0.25,
+                metalness: 0.1,
+                side: THREE.DoubleSide,
+                depthWrite: false,
+            });
+            const boxMesh = new THREE.Mesh(boxGeom, boxMat);
+            cubeGroup.add(boxMesh);
+
+            // 2. Crisp, glowing wireframe edges (clean bounding outline without protruding lines)
+            const edgesGeom = new THREE.EdgesGeometry(boxGeom);
+            const edgesMat = new THREE.LineBasicMaterial({
+                color: 0xf5cfac,
+                linewidth: 2,
+                transparent: true,
+                opacity: 0.95,
+            });
+            const edgeLines = new THREE.LineSegments(edgesGeom, edgesMat);
+            cubeGroup.add(edgeLines);
+
+            scene.add(cubeGroup);
+            scene.userData.groupSelectionCube = cubeGroup;
+
+            if (fgRef.current?.refresh) {
+                fgRef.current.refresh();
+            }
+        } catch (e) {
+            console.error("Error creating 3D selection cube:", e);
+        }
+    }, [is3D, selectedNodeIds, data.nodes]);
+
+    // Custom 3D Object for Selected Nodes (Black Outer Precision Orbit Ring + Wireframe Sphere)
     const getNodeThreeObject = useCallback((node: any) => {
-        if (!selectedNodeEDA || selectedNodeEDA.nodeId !== node.id) return undefined;
+        if (!selectedNodeIds.has(node.id)) return undefined;
         try {
             const THREE = typeof window !== 'undefined' ? (window as any).THREE || require('three') : null;
             if (!THREE) return undefined;
@@ -408,13 +885,13 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
             ring1.rotation.x = Math.PI / 2.5;
             group.add(ring1);
 
-            // 2. Second ring for a precision gyroscope look
+            // 2. Second ring for precision gyroscope look
             const ring2 = ring1.clone();
             ring2.rotation.x = -Math.PI / 2.5;
             ring2.rotation.y = Math.PI / 3;
             group.add(ring2);
 
-            // 3. Delicate outer black wireframe bounding sphere for instant visual recognition
+            // 3. Outer black wireframe bounding sphere for instant recognition
             const wireGeom = new THREE.SphereGeometry(r + 0.8, 14, 14);
             const wireMat = new THREE.MeshBasicMaterial({
                 color: 0x000000,
@@ -429,23 +906,21 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
         } catch (e) {
             return undefined;
         }
-    }, [selectedNodeEDA]);
+    }, [selectedNodeIds]);
 
     // Custom 2D Rendering
     const drawNode2D = useCallback((node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
         const radius = Math.sqrt(node.val || 0.1) * 3;
-        const isSelected = selectedNodeEDA?.nodeId === node.id;
+        const isSelected = selectedNodeIds.has(node.id);
 
         // Draw selected outer black ring
         if (isSelected) {
-            // Bold outer black ring
             ctx.beginPath();
             ctx.arc(node.x, node.y, radius + (4.5 / globalScale), 0, 2 * Math.PI, false);
             ctx.lineWidth = 3 / globalScale;
             ctx.strokeStyle = '#000000';
             ctx.stroke();
 
-            // Inner light gap outline for sharp contrast against background
             ctx.beginPath();
             ctx.arc(node.x, node.y, radius + (1.6 / globalScale), 0, 2 * Math.PI, false);
             ctx.lineWidth = 1.2 / globalScale;
@@ -461,10 +936,10 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
         ctx.lineWidth = (isSelected ? 2.5 : 1.5) / globalScale;
         ctx.strokeStyle = isSelected ? '#000000' : '#3d2c22';
         ctx.stroke();
-    }, [nodeColors, selectedNodeEDA]);
+    }, [nodeColors, selectedNodeIds]);
 
     const drawNodePointerArea2D = useCallback((node: any, color: string, ctx: CanvasRenderingContext2D) => {
-        const radius = Math.sqrt(node.val || 0.1) * 3 + 1; // Slight padding
+        const radius = Math.sqrt(node.val || 0.1) * 3 + 1;
         ctx.beginPath();
         ctx.arc(node.x, node.y, radius, 0, 2 * Math.PI, false);
         ctx.fillStyle = color;
@@ -500,9 +975,7 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
                 const values = cc[key] as any[];
                 let type: 'numerical' | 'categorical' = 'numerical';
 
-                // Check if actually numerical
                 if (Array.isArray(values)) {
-                    // Check sample to see if any non-numbers exist
                     const sample = values.slice(0, 10);
                     for (const v of sample) {
                         if (v !== null && v !== undefined && v !== '' && (typeof v !== 'number' || isNaN(v))) {
@@ -516,7 +989,6 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
             });
         }
 
-        // Safety check for empty data
         if (Array.isArray(originalData) && originalData.length === 0) {
             setColumns(cols);
             return;
@@ -528,11 +1000,9 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
 
         // Check for direct node values (flat numeric array)
         if (Array.isArray(originalData) && typeof originalData[0] === 'number') {
-            console.log("Detected direct node values.");
             cols.push({ name: 'Node Value', type: 'numerical', source: 'data' });
             setColumns(cols);
 
-            // Default to CC if present, else Node Value
             if (!selectedColumn) {
                 const defaultCol = cols.find(c => c.source === 'cc')?.name || 'Node Value';
                 setSelectedColumn(defaultCol);
@@ -544,7 +1014,6 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
         if (Array.isArray(originalData)) {
             firstRow = originalData[0];
         } else if (originalData && typeof originalData === 'object') {
-            // Fallback if column-based: construct a mock first row from the first value of each column
             const keys = Object.keys(originalData);
             if (keys.length > 0) {
                 firstRow = {};
@@ -557,17 +1026,14 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
 
         if (!firstRow) {
             setColumns(cols);
-            console.warn("Could not determine data structure from original_data");
             return;
         }
 
         const keys = Object.keys(firstRow);
 
         keys.forEach(key => {
-            // Avoid duplicates with CC
             if (cols.find(c => c.name === key)) return;
 
-            // Check type based on first few non-null values
             let type: 'numerical' | 'categorical' = 'categorical';
             const sampleSize = Math.min(Array.isArray(originalData) ? originalData.length : 10, 10);
 
@@ -594,9 +1060,7 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
 
         setColumns(cols);
 
-        // Default to Species if exists, else first categorical, else first numerical
         if (!selectedColumn || !cols.find(c => c.name === selectedColumn)) {
-            // Priority: CC -> Species -> Categorical -> First
             const defaultCol =
                 cols.find(c => c.source === 'cc')?.name ||
                 cols.find(c => c.name.toLowerCase() === 'species')?.name ||
@@ -677,7 +1141,7 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
         onGraphStats?.({ nodes: nodes.length, edges: edgeCount });
     }, [data.nodes, data.links]);
 
-    // Compute label distribution from originalData (separate effect so it updates when data loads)
+    // Compute label distribution from originalData
     useEffect(() => {
         setMapperStats(prev => {
             if (!prev) return prev;
@@ -707,8 +1171,6 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
         });
     }, [data.originalData]);
 
-
-
     // Calculate node colors when data or selected column changes
     useEffect(() => {
         if (!data.nodes.length || !selectedColumn) return;
@@ -721,7 +1183,6 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
             const colDef = columns.find(c => c.name === selectedColumn);
 
             if (colDef && colDef.type === 'categorical') {
-                // Categorical CC
                 setColumnStats(null);
                 const rawUnique = Array.from(new Set(values.filter(v => v !== undefined && v !== null).map(v => String(v))));
                 rawUnique.sort((a, b) => {
@@ -746,12 +1207,10 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
                     rawUnique.filter(cat => legendMap.has(cat)).map(cat => ({ label: cat, color: legendMap.get(cat)! }))
                 );
             } else {
-                // Numerical CC
                 setCategoricalLegend([]);
                 let min = Infinity;
                 let max = -Infinity;
 
-                // Find min/max
                 values.forEach(v => {
                     if (typeof v === 'number' && !isNaN(v)) {
                         min = Math.min(min, v);
@@ -762,9 +1221,7 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
                 setColumnStats({ min, max });
 
                 data.nodes.forEach((node, idx) => {
-                    // Assume nodes are ordered same as cc array
                     const val = values[idx];
-
                     if (val !== undefined && min !== Infinity && max !== -Infinity && typeof val === 'number' && !isNaN(val)) {
                         const t = (max - min === 0) ? 0.5 : (val - min) / (max - min);
                         const hue = 240 * (1 - t);
@@ -786,7 +1243,6 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
             setCategoricalLegend([]);
             const values = data.originalData as number[];
 
-            // 1. Calculate stats for numerical (average per node)
             const nodeValues: Record<string, number> = {};
             let min = Infinity;
             let max = -Infinity;
@@ -795,8 +1251,6 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
                 const indices = Array.isArray(node.indices) ? node.indices : [node.indices];
                 if (!indices.length) return;
 
-                // Map indices to values in the flat array
-                // Assume indices are 1-based from R, so subtract 1
                 const nodeVals = indices.map((idx: number) => values[idx - 1]).filter((v: any) => typeof v === 'number' && !isNaN(v));
 
                 if (nodeVals.length) {
@@ -810,7 +1264,6 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
 
             setColumnStats({ min, max });
 
-            // 2. Assign colors
             data.nodes.forEach(node => {
                 const val = nodeValues[node.id];
                 if (val !== undefined && min !== Infinity && max !== -Infinity) {
@@ -832,32 +1285,12 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
         let min = Infinity;
         let max = -Infinity;
 
-        // Helper to get value from original data (supports both 1-based and 0-based indexing)
         const getValue = (idx: number, col: string) => {
-            if (!data.originalData) return undefined;
-            const numIdx = typeof idx === 'number' ? idx : parseInt(String(idx), 10);
-            if (isNaN(numIdx)) return undefined;
-
-            if (Array.isArray(data.originalData)) {
-                // Try 1-based first (R standard output)
-                const row1 = data.originalData[numIdx - 1];
-                if (row1 && row1[col] !== undefined && row1[col] !== null) return row1[col];
-                // Fallback to 0-based index
-                const row0 = data.originalData[numIdx];
-                if (row0 && row0[col] !== undefined && row0[col] !== null) return row0[col];
-                return undefined;
-            } else if (typeof data.originalData === 'object') {
-                const colData = (data.originalData as any)[col];
-                if (Array.isArray(colData)) {
-                    if (colData[numIdx - 1] !== undefined && colData[numIdx - 1] !== null) return colData[numIdx - 1];
-                    if (colData[numIdx] !== undefined && colData[numIdx] !== null) return colData[numIdx];
-                }
-            }
-            return undefined;
+            const row = getRowFromData(idx, data.originalData);
+            return row ? row[col] : undefined;
         };
 
         if (colDef.type === 'numerical') {
-            // 1. Calculate stats for numerical
             setCategoricalLegend([]);
             const nodeValues: Record<string, number> = {};
 
@@ -877,11 +1310,10 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
 
             setColumnStats({ min, max });
 
-            // 2. Assign colors (Blue -> Red gradient)
             data.nodes.forEach(node => {
                 const val = nodeValues[node.id];
                 if (val !== undefined && min !== Infinity && max !== -Infinity) {
-                    const t = (max - min === 0) ? 0.5 : (val - min) / (max - min); // Normalize to [0, 1]
+                    const t = (max - min === 0) ? 0.5 : (val - min) / (max - min);
                     const hue = 240 * (1 - t);
                     newNodeColors[node.id] = `hsl(${hue}, 70%, 50%)`;
                 } else {
@@ -890,10 +1322,8 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
             });
 
         } else {
-            // Categorical
             setColumnStats(null);
 
-            // 1. Pre-scan all column values across originalData to build consistent unique categories
             const allColVals: any[] = [];
             if (Array.isArray(data.originalData)) {
                 allColVals.push(...data.originalData.map(r => r?.[selectedColumn]));
@@ -909,7 +1339,6 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
                 )
             );
 
-            // Sort unique categories (numeric natural order if numbers, else alphabetical)
             rawUnique.sort((a, b) => {
                 const numA = Number(a), numB = Number(b);
                 if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
@@ -931,7 +1360,6 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
                     }
                 });
 
-                // Find dominant category for this node
                 let dominant = '';
                 let maxCount = -1;
                 Object.entries(counts).forEach(([k, v]) => {
@@ -946,12 +1374,10 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
                     newNodeColors[node.id] = color;
                     if (!legendMap.has(dominant)) legendMap.set(dominant, color);
                 } else {
-                    // Node has no valid data for this column
                     newNodeColors[node.id] = '#888888';
                 }
             });
 
-            // Populate categorical legend preserving sorted order
             const sortedLegend = uniqueCategories
                 .filter(cat => legendMap.has(cat))
                 .map(cat => ({ label: cat, color: legendMap.get(cat)! }));
@@ -972,21 +1398,15 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
     const handleDownloadNodes = () => {
         if (!data.nodes.length) return;
 
-        // Create CSV content
-        // Header
         const headers = ["Id", "Label", "Size", "Species", "Indices", "Adjacency"];
 
-        // Rows
         const rows = data.nodes.map(node => {
-            // Find connected nodes
             const connectedIds = data.links
                 .filter(link => link.source === node.id || link.target === node.id)
                 .map(link => link.source === node.id ? link.target : link.source);
 
-            // Remove duplicates and self-loops if any
             const uniqueConnectedIds = Array.from(new Set(connectedIds)).filter(id => id !== node.id);
 
-            // Get raw node data if available to ensure we have all fields
             const rawNode = data.rawNodes?.find((n: any) => n.id === node.id);
             const indices = rawNode?.indices || node.indices;
 
@@ -1007,11 +1427,6 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
     const handleDownloadData = () => {
         if (!data.originalData) return;
 
-        // Convert original data (array of objects) to CSV
-        // We assume originalData is an array of objects from R
-        // R returns a list of columns, we need to convert to row-based for CSV if it's column-based
-        // But our R script returns a data frame which jsonlite converts to array of objects usually
-
         let csvContent = "";
 
         if (Array.isArray(data.originalData) && data.originalData.length > 0) {
@@ -1021,7 +1436,6 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
             );
             csvContent = [headers.join(","), ...rows].join("\n");
         } else if (data.originalData && typeof data.originalData === 'object' && Object.keys(data.originalData).length > 0) {
-            // Handle column-based format (list of vectors)
             const originalData = data.originalData;
             const columns = Object.keys(originalData);
             const rowCount = (originalData as any)[columns[0]].length;
@@ -1045,7 +1459,6 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
         const currentType = colDef.type;
         const targetType: 'categorical' | 'numerical' = currentType === 'numerical' ? 'categorical' : 'numerical';
 
-        // Extract all values for this column from data
         let values: any[] = [];
         if (colDef.source === 'cc' && data.cc && data.cc[selectedColumn]) {
             values = data.cc[selectedColumn];
@@ -1065,7 +1478,6 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
             return;
         }
 
-        // Case 1: Switching from Numerical -> Categorical
         if (targetType === 'categorical') {
             const uniqueValues = new Set(values.map(v => String(v)));
             const uniqueCount = uniqueValues.size;
@@ -1075,17 +1487,13 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
                     columnName: selectedColumn,
                     currentType,
                     targetType,
-                    reason: `The variable contains ${uniqueCount} unique values, which exceeds the limit of 30 categories. Converting continuous variables with more than 30 unique values to categorical is not allowed to prevent visual palette clutter. Categorical visualization is intended for discrete labels (such as digits 0–9 or cluster classes).`
+                    reason: `The variable contains ${uniqueCount} unique values, which exceeds the limit of 30 categories. Converting continuous variables with more than 30 unique values to categorical is not allowed to prevent visual palette clutter.`
                 });
                 return;
             }
 
-            // Successfully switch to categorical
             setColumns(prev => prev.map(c => c.name === selectedColumn ? { ...c, type: 'categorical' } : c));
-        }
-        // Case 2: Switching from Categorical -> Numerical
-        else {
-            // Check if column values are natively non-numeric
+        } else {
             const nonNumericValues = values.filter(v => {
                 if (typeof v === 'number') return isNaN(v);
                 if (typeof v === 'string') {
@@ -1101,12 +1509,11 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
                     columnName: selectedColumn,
                     currentType,
                     targetType,
-                    reason: `The variable contains non-numeric text data (e.g., '${sample}') and cannot be converted to Numerical. Numerical visualization requires numeric values to compute continuous color gradients, averages, and histogram ranges.`
+                    reason: `The variable contains non-numeric text data (e.g., '${sample}') and cannot be converted to Numerical.`
                 });
                 return;
             }
 
-            // Successfully switch to numerical
             setColumns(prev => prev.map(c => c.name === selectedColumn ? { ...c, type: 'numerical' } : c));
         }
     };
@@ -1115,7 +1522,6 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
         const file = event.target.files?.[0];
         if (!file) return;
 
-        // Reset input value so selecting the same file will trigger onChange
         event.target.value = '';
 
         const reader = new FileReader();
@@ -1138,7 +1544,6 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
                     return;
                 }
 
-                // Validate TDA-R Mapper JSON schema
                 const validation = validateMapperJson(json);
                 if (!validation.valid) {
                     setUploadError({
@@ -1151,7 +1556,6 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
                     return;
                 }
 
-                // Check optional fields: original_data, input_params
                 const warnings = checkMapperWarnings(json);
                 if (warnings.length > 0) {
                     setUploadWarnings({
@@ -1195,18 +1599,50 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
         reader.readAsText(file);
     };
 
-
-
     return (
-        <div className="h-full w-full relative overflow-hidden bg-[#2c1e17]">
+        <div 
+            ref={containerRef}
+            className={`h-full w-full relative overflow-hidden bg-[#2c1e17] select-none ${isShiftKey ? 'cursor-crosshair' : ''}`}
+            onPointerDownCapture={handlePointerDownCapture}
+            onPointerMoveCapture={handlePointerMoveCapture}
+            onPointerUpCapture={handlePointerUpCapture}
+            onContextMenu={(e) => e.preventDefault()}
+        >
             {isComputing && (
-                <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-[#2c1e17]/80 backdrop-blur-sm">
+                <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-[#2c1e17]/80 backdrop-blur-sm pointer-events-auto">
                     <div className="bg-[#3d2c22]/95 px-4 py-2 rounded-full border border-[#614738] flex items-center gap-2 shadow-xl">
                         <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-[#d49b6a]"></div>
                         <span className="text-xs text-[#e5cfbc]">Processing Graph Data...</span>
                     </div>
                 </div>
             )}
+
+            {/* Shift-Drag Selection Box Overlay (Perfect Square / Cube Marquee) */}
+            {dragStart && dragCurrent && (() => {
+                const rawDeltaX = dragCurrent.x - dragStart.x;
+                const rawDeltaY = dragCurrent.y - dragStart.y;
+                const squareSize = Math.max(Math.abs(rawDeltaX), Math.abs(rawDeltaY));
+                const boxLeft = rawDeltaX >= 0 ? dragStart.x : dragStart.x - squareSize;
+                const boxTop = rawDeltaY >= 0 ? dragStart.y : dragStart.y - squareSize;
+
+                return (
+                    <div
+                        className="fixed border-2 border-dashed border-[#d49b6a] bg-[#d49b6a]/15 shadow-2xl pointer-events-none rounded z-[300] backdrop-blur-[1px]"
+                        style={{
+                            left: boxLeft,
+                            top: boxTop,
+                            width: squareSize,
+                            height: squareSize,
+                        }}
+                    >
+                        <div className="absolute -top-6 left-0 px-2 py-0.5 rounded bg-[#3d2c22]/95 border border-[#614738] text-[10px] font-mono font-medium text-[#d49b6a] whitespace-nowrap shadow-md flex items-center gap-1">
+                            {is3D ? <Box className="w-3 h-3 text-[#d49b6a]" /> : <Square className="w-3 h-3 text-[#d49b6a]" />}
+                            {is3D ? '3D Cube Select' : '2D Square Select'}
+                        </div>
+                    </div>
+                );
+            })()}
+
             {/* Controls Portal: rendered into Sidebar via portal */}
             {portalReady && portalSlotRef.current && createPortal(
                 <div style={{ display: 'block', width: '100%' }} className="space-y-2 text-xs text-[#d6c3b4]">
@@ -1266,7 +1702,7 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
                             <Download className="w-3.5 h-3.5" /> Download Original Data
                         </button>
 
-                        {/* Switch Label / Variable Type Button (Directly above Upload JSON) */}
+                        {/* Switch Label / Variable Type Button */}
                         <button
                             onClick={handleToggleColumnType}
                             disabled={!selectedColumn}
@@ -1295,215 +1731,290 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
                 portalSlotRef.current
             )}
 
+            {/* Bottom Interaction Guide Hint */}
+            <div className="absolute bottom-6 left-[320px] z-20 pointer-events-none">
+                <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#3d2c22]/90 backdrop-blur-md border border-[#614738] text-[11px] text-[#af9684] shadow-lg">
+                    <span className="font-semibold text-[#d49b6a]">Shift + Drag</span> Box/Cube Select
+                    <span className="text-[#614738]">•</span>
+                    <span className="font-semibold text-[#e5cfbc]">Shift + Click</span> Multi-Select
+                    <span className="text-[#614738]">•</span>
+                    <span className="font-semibold text-[#e5cfbc]">Click</span> Inspect
+                    <span className="text-[#614738]">•</span>
+                    <span className="font-semibold text-[#e5cfbc]">Right Click</span> Pan
+                    <span className="text-[#614738]">•</span>
+                    <span className="font-semibold text-[#e5cfbc]">Blank</span> Clear
+                </div>
+            </div>
 
-            {/* Right Panel: Legend + Mapper Analytics */}
-            <div className="absolute top-6 bottom-6 right-6 z-[100] pointer-events-none flex flex-col gap-3.5 w-[350px]">
-                <div className="flex flex-col gap-3 overflow-y-auto max-h-[calc(100%-200px)] scrollbar-hide">
-                    {/* Legend Card */}
-                    <div className="backdrop-blur-xl border border-[#614738] p-4 rounded-xl shadow-2xl pointer-events-auto w-full bg-[#3d2c22]/95 text-[#d6c3b4]">
-                        <h4 className="font-bold mb-2.5 text-sm text-[#fdf8f4]">Legend</h4>
-                        {columns.find(c => c.name === selectedColumn)?.type === 'numerical' && columnStats ? (
-                            <div className="flex flex-col gap-1.5">
-                                <div className="h-3.5 w-full rounded" style={{ background: 'linear-gradient(to right, hsl(240, 70%, 50%), hsl(180, 70%, 50%), hsl(120, 70%, 50%), hsl(60, 70%, 50%), hsl(0, 70%, 50%))' }}></div>
-                                <div className="flex justify-between text-xs text-[#af9684] font-mono">
-                                    <span>{columnStats.min.toFixed(2)}</span>
-                                    <span>{columnStats.max.toFixed(2)}</span>
-                                </div>
-                            </div>
-                        ) : categoricalLegend.length > 0 ? (
-                            <div className="flex flex-col gap-2 max-h-44 overflow-y-auto pr-1">
-                                {categoricalLegend.map(item => (
-                                    <div key={item.label} className="flex items-center gap-2.5">
-                                        <div className="w-3 h-3 rounded-full shrink-0 shadow-sm" style={{ background: item.color }}></div>
-                                        <span className="text-xs font-medium truncate text-[#d6c3b4]" title={item.label}>{item.label}</span>
-                                    </div>
-                                ))}
-                            </div>
-                        ) : (
-                            <span className="text-xs text-[#9e8777] italic">No legend data</span>
+            {/* Right Panel: Legend + Mapper Analytics + Node / Group Inspector */}
+            <div 
+                className="absolute top-6 bottom-6 right-6 z-[100] pointer-events-none flex flex-col gap-1.5 w-[350px] overflow-hidden"
+                style={activeSplitter ? { userSelect: 'none', cursor: 'row-resize' } : undefined}
+            >
+                {/* Legend Card */}
+                <div 
+                    className="backdrop-blur-xl border border-[#614738] p-3 rounded-xl shadow-2xl pointer-events-auto w-full bg-[#3d2c22]/95 text-[#d6c3b4] flex flex-col shrink-0 overflow-hidden"
+                    style={{ height: `${legendHeight}px` }}
+                >
+                    <div className="flex items-center justify-between mb-1.5 shrink-0">
+                        <h4 className="font-bold text-xs text-[#fdf8f4] uppercase tracking-wider">Legend</h4>
+                        {selectedColumn && (
+                            <span className="text-[10px] text-[#d49b6a] font-mono truncate max-w-[150px]" title={selectedColumn}>
+                                {selectedColumn}
+                            </span>
                         )}
                     </div>
+                    {columns.find(c => c.name === selectedColumn)?.type === 'numerical' && columnStats ? (
+                        <div className="flex flex-col gap-1.5 justify-center flex-1">
+                            <div className="h-3 w-full rounded" style={{ background: 'linear-gradient(to right, hsl(240, 70%, 50%), hsl(180, 70%, 50%), hsl(120, 70%, 50%), hsl(60, 70%, 50%), hsl(0, 70%, 50%))' }}></div>
+                            <div className="flex justify-between text-[11px] text-[#af9684] font-mono">
+                                <span>{columnStats.min.toFixed(2)}</span>
+                                <span>{columnStats.max.toFixed(2)}</span>
+                            </div>
+                        </div>
+                    ) : categoricalLegend.length > 0 ? (
+                        <div className="flex flex-wrap items-center gap-1.5 overflow-y-auto pr-1 flex-1 content-start" style={{ scrollbarWidth: 'thin' }}>
+                            {categoricalLegend.map(item => (
+                                <div key={item.label} className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-[#4f3a2e]/70 border border-[#6b503f]/50 shrink-0 text-xs shadow-sm">
+                                    <div className="w-2.5 h-2.5 rounded-full shrink-0 shadow-sm" style={{ background: item.color }} />
+                                    <span className="font-medium text-[#d6c3b4] truncate max-w-[110px]" title={item.label}>{item.label}</span>
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <div className="flex items-center justify-center flex-1">
+                            <span className="text-xs text-[#9e8777] italic">No legend data</span>
+                        </div>
+                    )}
+                </div>
 
-                    {/* Mapper Analytics Card */}
-                    {mapperStats && (
-                        <div className="flex-1 flex flex-col backdrop-blur-xl border border-[#614738] rounded-xl shadow-2xl pointer-events-auto w-full overflow-hidden bg-[#3d2c22]/95 text-[#d6c3b4]">
-                            <button
-                                onClick={() => setIsAnalyticsOpen(v => !v)}
-                                className="w-full flex items-center justify-between px-4 py-3 font-bold text-sm tracking-wide text-[#fdf8f4] hover:bg-[#523d30]/60 transition-colors"
-                            >
-                                <span className="flex items-center gap-2">
-                                    <BarChart2 className="w-4 h-4 text-[#d49b6a]" />
-                                    Graph Analytics
-                                </span>
-                                {isAnalyticsOpen ? <ChevronDown className="w-3.5 h-3.5 shrink-0" /> : <ChevronRight className="w-3.5 h-3.5 shrink-0" />}
-                            </button>
-                            {isAnalyticsOpen && (
-                                <div className="border-t border-[#614738] px-4 pb-4 pt-3.5 space-y-3.5 text-xs">
-                                    <div className="grid grid-cols-2 gap-2">
-                                        {[
-                                            { label: 'Nodes', value: mapperStats.nodeCount },
-                                            { label: 'Edges', value: mapperStats.edgeCount },
-                                            { label: 'Components', value: mapperStats.connectedComponents },
-                                            { label: 'Max Size', value: mapperStats.maxClusterSize },
-                                        ].map(({ label, value }) => (
-                                            <div key={label} className="rounded-lg px-2.5 py-2 text-center bg-[#4f3a2e] border border-[#6b503f]">
-                                                <div className="text-[11px] font-medium text-[#af9684]">{label}</div>
-                                                <div className="text-base font-bold font-mono text-[#fdf8f4]">{value}</div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                    <div className="text-xs font-mono text-[#af9684]">
-                                        Avg cluster size: <span className="text-[#e5cfbc] font-semibold">{mapperStats.avgClusterSize.toFixed(1)}</span>
-                                    </div>
+                {/* Legend / Analytics Splitter */}
+                <div
+                    onPointerDown={(e) => handleSplitterDown('legend', e)}
+                    className="w-full h-2.5 -my-0.5 cursor-row-resize flex items-center justify-center group pointer-events-auto select-none z-10 shrink-0"
+                    title="Drag to resize Legend"
+                >
+                    <div className="w-10 h-1 rounded-full bg-[#614738]/70 group-hover:bg-[#d49b6a] group-active:bg-[#d49b6a] transition-colors" />
+                </div>
+
+                {/* Mapper Analytics Card */}
+                {mapperStats && (
+                    <div 
+                        className="flex flex-col backdrop-blur-xl border border-[#614738] rounded-xl shadow-2xl pointer-events-auto w-full overflow-hidden bg-[#3d2c22]/95 text-[#d6c3b4] shrink-0"
+                        style={{ height: isAnalyticsOpen ? `${analyticsHeight}px` : 'auto' }}
+                    >
+                        <button
+                            onClick={() => setIsAnalyticsOpen(v => !v)}
+                            className="w-full flex items-center justify-between px-4 py-2.5 font-bold text-sm tracking-wide text-[#fdf8f4] hover:bg-[#523d30]/60 transition-colors shrink-0"
+                        >
+                            <span className="flex items-center gap-2">
+                                <BarChart2 className="w-4 h-4 text-[#d49b6a]" />
+                                Graph Analytics
+                            </span>
+                            {isAnalyticsOpen ? <ChevronDown className="w-3.5 h-3.5 shrink-0 text-[#af9684]" /> : <ChevronRight className="w-3.5 h-3.5 shrink-0 text-[#af9684]" />}
+                        </button>
+                        {isAnalyticsOpen && (
+                            <div className="border-t border-[#614738] px-4 pb-4 pt-3 space-y-3.5 text-xs overflow-y-auto flex-1" style={{ scrollbarWidth: 'thin' }}>
+                                <div className="grid grid-cols-2 gap-2">
+                                    {[
+                                        { label: 'Nodes', value: mapperStats.nodeCount },
+                                        { label: 'Edges', value: mapperStats.edgeCount },
+                                        { label: 'Components', value: mapperStats.connectedComponents },
+                                        { label: 'Max Size', value: mapperStats.maxClusterSize },
+                                    ].map(({ label, value }) => (
+                                        <div key={label} className="rounded-lg px-2.5 py-2 text-center bg-[#4f3a2e] border border-[#6b503f]">
+                                            <div className="text-[11px] font-medium text-[#af9684]">{label}</div>
+                                            <div className="text-base font-bold font-mono text-[#fdf8f4]">{value}</div>
+                                        </div>
+                                    ))}
+                                </div>
+                                <div className="text-xs font-mono text-[#af9684]">
+                                    Avg cluster size: <span className="text-[#e5cfbc] font-semibold">{mapperStats.avgClusterSize.toFixed(1)}</span>
+                                </div>
+                                <div>
+                                    <p className="text-xs font-semibold mb-2 text-[#e5cfbc]">Cluster Size Distribution</p>
+                                    {(() => {
+                                        const maxCount = Math.max(...mapperStats.clusterSizeHist.map(b => b.count), 1);
+                                        const barColor = '#3b82f6';
+                                        const W = 290, H = 60, pad = 14;
+                                        const bw = (W - pad - 4) / mapperStats.clusterSizeHist.length;
+                                        return (
+                                            <svg width={W} height={H + 18} className="overflow-visible">
+                                                {mapperStats.clusterSizeHist.map((b, i) => {
+                                                    const bh = Math.max(3, (b.count / maxCount) * H);
+                                                    const x = pad + i * bw;
+                                                    const y = H - bh;
+                                                    return (
+                                                        <g key={i}>
+                                                            <rect x={x + 1} y={y} width={bw - 4} height={bh} rx={2} fill={barColor} opacity={0.9} />
+                                                            <text x={x + bw / 2} y={H + 13} textAnchor="middle" fontSize={8} fill="#af9684">{b.bin}</text>
+                                                            {b.count > 0 && <text x={x + bw / 2} y={y - 3} textAnchor="middle" fontSize={8.5} fontWeight="600" fill="#fdf8f4">{b.count}</text>}
+                                                        </g>
+                                                    );
+                                                })}
+                                                <line x1={pad} y1={0} x2={pad} y2={H} stroke="#6b503f" strokeWidth={1} />
+                                                <line x1={pad} y1={H} x2={W} y2={H} stroke="#6b503f" strokeWidth={1} />
+                                            </svg>
+                                        );
+                                    })()}
+                                </div>
+                                <div>
+                                    <p className="text-xs font-semibold mb-2 text-[#e5cfbc]">Degree Distribution</p>
+                                    {(() => {
+                                        const maxCount = Math.max(...mapperStats.degreeHist.map(b => b.count), 1);
+                                        const barColor = '#8b5cf6';
+                                        const W = 290, H = 60, pad = 14;
+                                        const bw = (W - pad - 4) / mapperStats.degreeHist.length;
+                                        return (
+                                            <svg width={W} height={H + 18} className="overflow-visible">
+                                                {mapperStats.degreeHist.map((b, i) => {
+                                                    const bh = Math.max(3, (b.count / maxCount) * H);
+                                                    const x = pad + i * bw;
+                                                    const y = H - bh;
+                                                    return (
+                                                        <g key={i}>
+                                                            <rect x={x + 1} y={y} width={bw - 4} height={bh} rx={2} fill={barColor} opacity={0.9} />
+                                                            <text x={x + bw / 2} y={H + 13} textAnchor="middle" fontSize={8} fill="#af9684">{b.bin}</text>
+                                                            {b.count > 0 && <text x={x + bw / 2} y={y - 3} textAnchor="middle" fontSize={8.5} fontWeight="600" fill="#fdf8f4">{b.count}</text>}
+                                                        </g>
+                                                    );
+                                                })}
+                                                <line x1={pad} y1={0} x2={pad} y2={H} stroke="#6b503f" strokeWidth={1} />
+                                                <line x1={pad} y1={H} x2={W} y2={H} stroke="#6b503f" strokeWidth={1} />
+                                            </svg>
+                                        );
+                                    })()}
+                                </div>
+                                {/* Label Distribution */}
+                                {mapperStats.labelDist && mapperStats.labelDist.length > 0 && (
                                     <div>
-                                        <p className="text-xs font-semibold mb-2 text-[#e5cfbc]">Cluster Size Distribution</p>
-                                        {(() => {
-                                            const maxCount = Math.max(...mapperStats.clusterSizeHist.map(b => b.count), 1);
-                                            const barColor = '#3b82f6';
-                                            const W = 290, H = 60, pad = 14;
-                                            const bw = (W - pad - 4) / mapperStats.clusterSizeHist.length;
+                                        <p className="text-xs font-semibold mb-2 text-[#e5cfbc]">Label Distribution</p>
+                                        {mapperStats.labelDist.map(ld => {
+                                            const COLORS_CYCLE = ['#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#ef4444', '#06b6d4', '#ec4899', '#f97316'];
                                             return (
-                                                <svg width={W} height={H + 18} className="overflow-visible">
-                                                    {mapperStats.clusterSizeHist.map((b, i) => {
-                                                        const bh = Math.max(3, (b.count / maxCount) * H);
-                                                        const x = pad + i * bw;
-                                                        const y = H - bh;
-                                                        return (
-                                                            <g key={i}>
-                                                                <rect x={x + 1} y={y} width={bw - 4} height={bh} rx={2} fill={barColor} opacity={0.9} />
-                                                                <text x={x + bw / 2} y={H + 13} textAnchor="middle" fontSize={8} fill="#af9684">{b.bin}</text>
-                                                                {b.count > 0 && <text x={x + bw / 2} y={y - 3} textAnchor="middle" fontSize={8.5} fontWeight="600" fill="#fdf8f4">{b.count}</text>}
-                                                            </g>
-                                                        );
-                                                    })}
-                                                    <line x1={pad} y1={0} x2={pad} y2={H} stroke="#6b503f" strokeWidth={1} />
-                                                    <line x1={pad} y1={H} x2={W} y2={H} stroke="#6b503f" strokeWidth={1} />
-                                                </svg>
+                                                <div key={ld.col} className="mb-3">
+                                                    <p className="text-[11px] uppercase tracking-wider mb-1.5 text-[#af9684] font-medium">{ld.col}</p>
+                                                    <div className="flex w-full h-3.5 rounded overflow-hidden mb-2">
+                                                        {ld.counts.map((c, i) => (
+                                                            <div
+                                                                key={c.label}
+                                                                title={`${c.label}: ${c.count} (${(c.pct * 100).toFixed(1)}%)`}
+                                                                style={{ width: `${c.pct * 100}%`, background: COLORS_CYCLE[i % COLORS_CYCLE.length] }}
+                                                            />
+                                                        ))}
+                                                    </div>
+                                                    <div className="flex flex-col gap-1">
+                                                        {ld.counts.map((c, i) => (
+                                                            <div key={c.label} className="flex items-center gap-2">
+                                                                <div className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: COLORS_CYCLE[i % COLORS_CYCLE.length] }} />
+                                                                <span className="text-xs truncate text-[#d6c3b4]" title={c.label}>{c.label}</span>
+                                                                <span className="text-xs font-mono ml-auto shrink-0 text-[#af9684]">{c.count} ({(c.pct * 100).toFixed(0)}%)</span>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
                                             );
-                                        })()}
+                                        })}
                                     </div>
-                                    <div>
-                                        <p className="text-xs font-semibold mb-2 text-[#e5cfbc]">Degree Distribution</p>
-                                        {(() => {
-                                            const maxCount = Math.max(...mapperStats.degreeHist.map(b => b.count), 1);
-                                            const barColor = '#8b5cf6';
-                                            const W = 290, H = 60, pad = 14;
-                                            const bw = (W - pad - 4) / mapperStats.degreeHist.length;
-                                            return (
-                                                <svg width={W} height={H + 18} className="overflow-visible">
-                                                    {mapperStats.degreeHist.map((b, i) => {
-                                                        const bh = Math.max(3, (b.count / maxCount) * H);
-                                                        const x = pad + i * bw;
-                                                        const y = H - bh;
-                                                        return (
-                                                            <g key={i}>
-                                                                <rect x={x + 1} y={y} width={bw - 4} height={bh} rx={2} fill={barColor} opacity={0.9} />
-                                                                <text x={x + bw / 2} y={H + 13} textAnchor="middle" fontSize={8} fill="#af9684">{b.bin}</text>
-                                                                {b.count > 0 && <text x={x + bw / 2} y={y - 3} textAnchor="middle" fontSize={8.5} fontWeight="600" fill="#fdf8f4">{b.count}</text>}
-                                                            </g>
-                                                        );
-                                                    })}
-                                                    <line x1={pad} y1={0} x2={pad} y2={H} stroke="#6b503f" strokeWidth={1} />
-                                                    <line x1={pad} y1={H} x2={W} y2={H} stroke="#6b503f" strokeWidth={1} />
-                                                </svg>
-                                            );
-                                        })()}
-                                    </div>
-                                    {/* Label Distribution */}
-                                    {mapperStats.labelDist && mapperStats.labelDist.length > 0 && (
-                                        <div>
-                                            <p className="text-xs font-semibold mb-2 text-[#e5cfbc]">Label Distribution</p>
-                                            {mapperStats.labelDist.map(ld => {
-                                                const COLORS_CYCLE = ['#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#ef4444', '#06b6d4', '#ec4899', '#f97316'];
+                                )}
+
+                                {/* Mapper Parameters */}
+                                {data.inputParams && typeof data.inputParams === 'object' && (
+                                    <div className="pt-2.5 border-t border-[#614738]">
+                                        <div className="flex items-center justify-between mb-2">
+                                            <p className="text-xs font-semibold text-[#e5cfbc]">Mapper Parameters</p>
+                                            <span className="text-[10px] text-[#af9684] italic">scrollable</span>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-1.5 text-xs font-mono max-h-48 overflow-y-auto pr-1" style={{ scrollbarWidth: 'thin' }}>
+                                            {Object.entries(data.inputParams).map(([k, v]) => {
+                                                const formattedVal = formatParamValue(v);
                                                 return (
-                                                    <div key={ld.col} className="mb-3">
-                                                        <p className="text-[11px] uppercase tracking-wider mb-1.5 text-[#af9684] font-medium">{ld.col}</p>
-                                                        {/* Stacked bar */}
-                                                        <div className="flex w-full h-3.5 rounded overflow-hidden mb-2">
-                                                            {ld.counts.map((c, i) => (
-                                                                <div
-                                                                    key={c.label}
-                                                                    title={`${c.label}: ${c.count} (${(c.pct * 100).toFixed(1)}%)`}
-                                                                    style={{ width: `${c.pct * 100}%`, background: COLORS_CYCLE[i % COLORS_CYCLE.length] }}
-                                                                />
-                                                            ))}
-                                                        </div>
-                                                        {/* Legend dots */}
-                                                        <div className="flex flex-col gap-1">
-                                                            {ld.counts.map((c, i) => (
-                                                                <div key={c.label} className="flex items-center gap-2">
-                                                                    <div className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: COLORS_CYCLE[i % COLORS_CYCLE.length] }} />
-                                                                    <span className="text-xs truncate text-[#d6c3b4]" title={c.label}>{c.label}</span>
-                                                                    <span className="text-xs font-mono ml-auto shrink-0 text-[#af9684]">{c.count} ({(c.pct * 100).toFixed(0)}%)</span>
-                                                                </div>
-                                                            ))}
-                                                        </div>
+                                                    <div
+                                                        key={k}
+                                                        className="p-2 rounded bg-[#4f3a2e] border border-[#6b503f] overflow-x-auto whitespace-nowrap select-text cursor-grab active:cursor-grabbing"
+                                                        style={{ scrollbarWidth: 'thin' }}
+                                                        title={`${k}: ${formattedVal}`}
+                                                    >
+                                                        <span className="text-[#af9684]">{k}: </span>
+                                                        <span className="text-[#fdf8f4] font-semibold">{formattedVal}</span>
                                                     </div>
                                                 );
                                             })}
                                         </div>
-                                    )}
-
-                                    {/* Mapper Parameters (if input_params provided) */}
-                                    {data.inputParams && typeof data.inputParams === 'object' && (
-                                        <div className="pt-2.5 border-t border-[#614738]">
-                                            <div className="flex items-center justify-between mb-2">
-                                                <p className="text-xs font-semibold text-[#e5cfbc]">Mapper Parameters</p>
-                                                <span className="text-[10px] text-[#af9684] italic">scrollable</span>
-                                            </div>
-                                            <div className="grid grid-cols-2 gap-1.5 text-xs font-mono max-h-48 overflow-y-auto pr-1" style={{ scrollbarWidth: 'thin' }}>
-                                                {Object.entries(data.inputParams).map(([k, v]) => {
-                                                    const formattedVal = formatParamValue(v);
-                                                    return (
-                                                        <div
-                                                            key={k}
-                                                            className="p-2 rounded bg-[#4f3a2e] border border-[#6b503f] overflow-x-auto whitespace-nowrap select-text cursor-grab active:cursor-grabbing"
-                                                            style={{ scrollbarWidth: 'thin' }}
-                                                            title={`${k}: ${formattedVal}`}
-                                                        >
-                                                            <span className="text-[#af9684]">{k}: </span>
-                                                            <span className="text-[#fdf8f4] font-semibold">{formattedVal}</span>
-                                                        </div>
-                                                    );
-                                                })}
-                                            </div>
-                                        </div>
-                                    )}
-                                </div>
-                            )}
-                        </div>
-                    )}
-
-                </div>
-                {/* Node EDA: Click to Explore */}
-                <div className="flex-1 flex flex-col backdrop-blur-xl border border-[#614738] rounded-xl shadow-2xl pointer-events-auto w-full overflow-hidden bg-[#3d2c22]/95 text-[#d6c3b4]">
-                    <div className="flex items-center gap-2.5 px-4 py-3.5 border-b border-[#614738]">
-                        <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: selectedNodeEDA ? (nodeColors[selectedNodeEDA.nodeId] || '#3b82f6') : '#614738' }} />
-                        <span className="font-bold text-sm text-[#fdf8f4]">
-                            {selectedNodeEDA ? selectedNodeEDA.nodeName : 'Node Inspector'}
-                        </span>
-                        {selectedNodeEDA && (
-                            <>
-                                <span className="text-xs px-2 py-0.5 rounded-full font-mono bg-[#4f3a2e] text-[#d49b6a] border border-[#6b503f]">{selectedNodeEDA.size} pts</span>
-                                <button onClick={() => setSelectedNodeEDA(null)} className="ml-auto p-1 rounded hover:bg-[#523d30] transition-colors text-[#af9684] hover:text-[#fdf8f4]">
-                                    <X className="w-3.5 h-3.5" />
-                                </button>
-                            </>
+                                    </div>
+                                )}
+                            </div>
                         )}
                     </div>
-                    {selectedNodeEDA ? (
+                )}
+
+                {/* Analytics / Node Inspector Splitter */}
+                {mapperStats && isAnalyticsOpen && (
+                    <div
+                        onPointerDown={(e) => handleSplitterDown('analytics', e)}
+                        className="w-full h-2.5 -my-0.5 cursor-row-resize flex items-center justify-center group pointer-events-auto select-none z-10 shrink-0"
+                        title="Drag up/down to resize Graph Analytics & Node Inspector"
+                    >
+                        <div className="w-10 h-1 rounded-full bg-[#614738]/70 group-hover:bg-[#d49b6a] group-active:bg-[#d49b6a] transition-colors" />
+                    </div>
+                )}
+
+                {/* Node & Group Inspector: Click or Shift-Drag to Explore */}
+                <div className="flex-1 flex flex-col backdrop-blur-xl border border-[#614738] rounded-xl shadow-2xl pointer-events-auto w-full overflow-hidden bg-[#3d2c22]/95 text-[#d6c3b4]">
+                    <div className="flex items-center gap-2.5 px-4 py-3.5 border-b border-[#614738]">
+                        {selectedGroupEDA ? (
+                            selectedGroupEDA.isGroup ? (
+                                <div className="p-1 rounded bg-[#523d30] border border-[#755745] shrink-0">
+                                    <Layers className="w-3.5 h-3.5 text-[#d49b6a]" />
+                                </div>
+                            ) : (
+                                <div 
+                                    className="w-3 h-3 rounded-full shrink-0 shadow-sm border border-black/30" 
+                                    style={{ background: nodeColors[selectedGroupEDA.nodeIds[0]] || '#3b82f6' }} 
+                                />
+                            )
+                        ) : (
+                            <div className="w-2.5 h-2.5 rounded-full shrink-0 bg-[#614738]" />
+                        )}
+
+                        <span className="font-bold text-sm text-[#fdf8f4] truncate">
+                            {selectedGroupEDA ? selectedGroupEDA.nodeName : 'Node Inspector'}
+                        </span>
+
+                        {selectedGroupEDA && (
+                            <div className="flex items-center gap-1.5 ml-auto">
+                                {selectedGroupEDA.isGroup && (
+                                    <span className="text-[11px] px-2 py-0.5 rounded-full font-mono bg-[#4f3a2e] text-[#d49b6a] border border-[#6b503f] whitespace-nowrap">
+                                        {selectedGroupEDA.nodeCount} nodes
+                                    </span>
+                                )}
+                                <span className="text-[11px] px-2 py-0.5 rounded-full font-mono bg-[#4f3a2e] text-[#e5cfbc] border border-[#6b503f] whitespace-nowrap">
+                                    {selectedGroupEDA.uniquePoints} pts
+                                </span>
+                                <button 
+                                    onClick={() => setSelectedNodeIds(new Set())} 
+                                    className="p-1 rounded hover:bg-[#523d30] transition-colors text-[#af9684] hover:text-[#fdf8f4]"
+                                    title="Deselect"
+                                >
+                                    <X className="w-3.5 h-3.5" />
+                                </button>
+                            </div>
+                        )}
+                    </div>
+
+                    {selectedGroupEDA ? (
                         <div className="overflow-y-auto overflow-x-hidden flex-1" style={{ scrollbarWidth: 'thin', minHeight: 0 }}>
-                            {selectedNodeEDA.cols.length === 0 ? (
+                            {selectedGroupEDA.cols.length === 0 ? (
                                 <div className="py-8 px-4 text-center space-y-2">
                                     <p className="text-sm text-[#e5cfbc] font-semibold">Feature Distributions Unavailable</p>
                                     <p className="text-xs text-[#af9684] leading-relaxed">
                                         Raw feature rows were not included in this JSON (<code>original_data</code> missing).
-                                        <br />Node size: <span className="font-mono text-amber-300 font-bold">{selectedNodeEDA.size}</span> data points.
+                                        <br />Selected: <span className="font-mono text-amber-300 font-bold">{selectedGroupEDA.nodeCount}</span> {selectedGroupEDA.nodeCount > 1 ? 'nodes' : 'node'} ({selectedGroupEDA.uniquePoints} data points).
                                     </p>
                                 </div>
                             ) : (
                                 <div className="flex flex-col gap-6 px-4 py-3.5">
-                                {selectedNodeEDA.cols.map(col => {
+                                {selectedGroupEDA.cols.map(col => {
                                     if (col.type === 'categorical' && col.counts) {
                                         const maxC = Math.max(...col.counts.map(c => c.count), 1);
                                         const W = Math.max(100, col.counts.length * 32 + 20);
@@ -1522,7 +2033,7 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
                                                             <g key={c.label}>
                                                                 <rect x={x + 1} y={y} width={bw - 4} height={bh} rx={2} fill={COLORS[i % COLORS.length]} opacity={0.9} />
                                                                 <text x={x + bw / 2} y={H + 11} textAnchor="middle" fontSize={8} fill="#af9684" transform={`rotate(-30, ${x + bw / 2}, ${H + 11})`}>{c.label.length > 7 ? c.label.slice(0, 6) + '…' : c.label}</text>
-                                                                <text x={x + bw / 2} y={y - 3} textAnchor="middle" fontSize={8.5} fontWeight="600" fill="#fdf8f4">{c.count}</text>
+                                                                {c.count > 0 && <text x={x + bw / 2} y={y - 3} textAnchor="middle" fontSize={8.5} fontWeight="600" fill="#fdf8f4">{c.count}</text>}
                                                             </g>
                                                         );
                                                     })}
@@ -1567,18 +2078,13 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
                     ) : (
                         <div className="flex-1 flex flex-col items-center justify-center px-4 py-6 gap-2.5 text-[#9e8777]">
                             <svg className="w-7 h-7 opacity-40" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122" /></svg>
-                            <p className="text-xs text-center leading-relaxed">Click a node<br />to explore its data</p>
+                            <p className="text-xs text-center leading-relaxed">
+                                Click a node or hold <span className="text-[#d49b6a] font-semibold">Shift + Drag</span><br />to group & analyze nodes
+                            </p>
                         </div>
                     )}
                 </div>
             </div>
-
-
-            {/* <div className="absolute bottom-4 left-4 z-10 pointer-events-none">
-                <p className="text-[#af9684] text-xs">
-                    Left-click: Rotate • Right-click: Pan • Scroll: Zoom • Drag Node: Move
-                </p>
-            </div> */}
 
             {is3D ? (
                 <ForceGraph3D
@@ -1600,7 +2106,9 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
                     rendererConfig={{ antialias: true, alpha: true, powerPreference: 'high-performance' }}
                     onNodeDragEnd={handleNodeDragEnd}
                     onNodeClick={handleNodeClick}
+                    onBackgroundClick={handleBackgroundClick}
                     enablePointerInteraction={true}
+                    enableNodeDrag={!isShiftKey && !dragStart}
                 />
             ) : (
                 <ForceGraph2D
@@ -1614,7 +2122,11 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
                     backgroundColor="#2c1e17"
                     onNodeDragEnd={handleNodeDragEnd}
                     onNodeClick={handleNodeClick}
+                    onBackgroundClick={handleBackgroundClick}
                     enablePointerInteraction={true}
+                    enablePanInteraction={!isShiftKey && !dragStart}
+                    enableZoomInteraction={!isShiftKey && !dragStart}
+                    enableNodeDrag={!isShiftKey && !dragStart}
                 />
             )}
 
