@@ -20,12 +20,14 @@
     "tailwind-merge": "^3.4.0"
   },
   "devDependencies": {
+    "@tailwindcss/oxide-darwin-arm64": "^4.2.2",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.0.3",
+    "node": "^22.19.0",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

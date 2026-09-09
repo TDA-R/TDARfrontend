@@ -694,18 +694,18 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
                             try {
                                 const THREE = typeof window !== 'undefined' ? (window as any).THREE || require('three') : null;
                                 if (THREE) {
-                                    const hemiLight = new THREE.HemisphereLight(0xfff5ea, 0x2c1e17, 1.2);
+                                    const hemiLight = new THREE.HemisphereLight(0xffffff, 0xebe5d9, 1.4);
                                     scene.add(hemiLight);
 
-                                    const keyLight = new THREE.DirectionalLight(0xfff0dd, 1.5);
+                                    const keyLight = new THREE.DirectionalLight(0xfffaf0, 1.4);
                                     keyLight.position.set(120, 160, 100);
                                     scene.add(keyLight);
 
-                                    const fillLight = new THREE.DirectionalLight(0xb4d2ff, 0.7);
+                                    const fillLight = new THREE.DirectionalLight(0xdcebe1, 0.7);
                                     fillLight.position.set(-120, -60, -100);
                                     scene.add(fillLight);
 
-                                    const rimLight = new THREE.DirectionalLight(0xe5b88f, 1.1);
+                                    const rimLight = new THREE.DirectionalLight(0xbce6cb, 0.6);
                                     rimLight.position.set(0, -140, 80);
                                     scene.add(rimLight);
 
@@ -778,25 +778,20 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
         if (fgRef.current?.refresh) {
             fgRef.current.refresh();
         }
-    }, [selectedNodeIds]);
 
-    // 3D Bounding Box / Cube Mesh for Group Selection (Clean, Sleek, No Whisker Lines)
-    useEffect(() => {
-        if (!is3D || !fgRef.current) return;
-        const scene = fgRef.current.scene?.();
-        if (!scene) return;
-
-        // Clean up previous 3D bounding group mesh
-        if (scene.userData.groupSelectionCube) {
-            scene.remove(scene.userData.groupSelectionCube);
-            scene.userData.groupSelectionCube = null;
-        }
-
-        if (selectedNodeIds.size === 0) return;
-
+        // Handle 3D selection bounding equilateral cube mesh
+        if (!is3D || !fgRef.current?.scene) return;
         try {
             const THREE = typeof window !== 'undefined' ? (window as any).THREE || require('three') : null;
             if (!THREE) return;
+            const scene = fgRef.current.scene();
+
+            if (scene.userData.groupSelectionCube) {
+                scene.remove(scene.userData.groupSelectionCube);
+                scene.userData.groupSelectionCube = null;
+            }
+
+            if (selectedNodeIds.size === 0) return;
 
             const selectedNodes = data.nodes.filter(n => selectedNodeIds.has(n.id));
             let minX = Infinity, maxX = -Infinity;
@@ -829,12 +824,12 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
             const cubeGroup = new THREE.Group();
             cubeGroup.position.set(cx, cy, cz);
 
-            // 1. Translucent warm volumetric fill (Equilateral 3D Cube)
+            // 1. Translucent volumetric fill (Equilateral 3D Cube in moss tone)
             const boxGeom = new THREE.BoxGeometry(cubeSide, cubeSide, cubeSide);
             const boxMat = new THREE.MeshStandardMaterial({
-                color: 0xd49b6a,
+                color: 0x1d5c45,
                 transparent: true,
-                opacity: 0.15,
+                opacity: 0.12,
                 roughness: 0.25,
                 metalness: 0.1,
                 side: THREE.DoubleSide,
@@ -843,13 +838,13 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
             const boxMesh = new THREE.Mesh(boxGeom, boxMat);
             cubeGroup.add(boxMesh);
 
-            // 2. Crisp, glowing wireframe edges (clean bounding outline without protruding lines)
+            // 2. Crisp wireframe edges
             const edgesGeom = new THREE.EdgesGeometry(boxGeom);
             const edgesMat = new THREE.LineBasicMaterial({
-                color: 0xf5cfac,
+                color: 0x1d5c45,
                 linewidth: 2,
                 transparent: true,
-                opacity: 0.95,
+                opacity: 0.85,
             });
             const edgeLines = new THREE.LineSegments(edgesGeom, edgesMat);
             cubeGroup.add(edgeLines);
@@ -865,7 +860,7 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
         }
     }, [is3D, selectedNodeIds, data.nodes]);
 
-    // Custom 3D Object for Selected Nodes (Black Outer Precision Orbit Ring + Wireframe Sphere)
+    // Custom 3D Object for Selected Nodes (Precision Orbit Ring + Wireframe Sphere)
     const getNodeThreeObject = useCallback((node: any) => {
         if (!selectedNodeIds.has(node.id)) return undefined;
         try {
@@ -874,12 +869,12 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
             const r = (Math.cbrt(node.val || 1) * 3.5) + 1.2;
             const group = new THREE.Group();
 
-            // 1. Sleek metallic black torus orbital ring
+            // 1. Sleek metallic moss torus orbital ring
             const ringGeom = new THREE.TorusGeometry(r, 0.4, 16, 48);
             const ringMat = new THREE.MeshStandardMaterial({
-                color: 0x0a0a0a,
+                color: 0x1d5c45,
                 roughness: 0.25,
-                metalness: 0.8
+                metalness: 0.7
             });
             const ring1 = new THREE.Mesh(ringGeom, ringMat);
             ring1.rotation.x = Math.PI / 2.5;
@@ -891,13 +886,13 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
             ring2.rotation.y = Math.PI / 3;
             group.add(ring2);
 
-            // 3. Outer black wireframe bounding sphere for instant recognition
+            // 3. Outer wireframe bounding sphere
             const wireGeom = new THREE.SphereGeometry(r + 0.8, 14, 14);
             const wireMat = new THREE.MeshBasicMaterial({
-                color: 0x000000,
+                color: 0x1d5c45,
                 wireframe: true,
                 transparent: true,
-                opacity: 0.6
+                opacity: 0.5
             });
             const wireSphere = new THREE.Mesh(wireGeom, wireMat);
             group.add(wireSphere);
@@ -913,28 +908,28 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
         const radius = Math.sqrt(node.val || 0.1) * 3;
         const isSelected = selectedNodeIds.has(node.id);
 
-        // Draw selected outer black ring
+        // Draw selected outer moss ring
         if (isSelected) {
             ctx.beginPath();
             ctx.arc(node.x, node.y, radius + (4.5 / globalScale), 0, 2 * Math.PI, false);
             ctx.lineWidth = 3 / globalScale;
-            ctx.strokeStyle = '#000000';
+            ctx.strokeStyle = '#1d5c45';
             ctx.stroke();
 
             ctx.beginPath();
             ctx.arc(node.x, node.y, radius + (1.6 / globalScale), 0, 2 * Math.PI, false);
             ctx.lineWidth = 1.2 / globalScale;
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
             ctx.stroke();
         }
 
         ctx.beginPath();
         ctx.arc(node.x, node.y, radius, 0, 2 * Math.PI, false);
-        ctx.fillStyle = nodeColors[node.id] || node.color || '#3b82f6';
+        ctx.fillStyle = nodeColors[node.id] || node.color || '#1d5c45';
         ctx.fill();
 
-        ctx.lineWidth = (isSelected ? 2.5 : 1.5) / globalScale;
-        ctx.strokeStyle = isSelected ? '#000000' : '#3d2c22';
+        ctx.lineWidth = (isSelected ? 2.5 : 1.2) / globalScale;
+        ctx.strokeStyle = isSelected ? '#1d5c45' : 'rgba(21, 33, 29, 0.25)';
         ctx.stroke();
     }, [nodeColors, selectedNodeIds]);
 
@@ -1602,17 +1597,17 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
     return (
         <div 
             ref={containerRef}
-            className={`h-full w-full relative overflow-hidden bg-[#2c1e17] select-none ${isShiftKey ? 'cursor-crosshair' : ''}`}
+            className={`h-full w-full relative overflow-hidden bg-[#f5f1e8] select-none ${isShiftKey ? 'cursor-crosshair' : ''}`}
             onPointerDownCapture={handlePointerDownCapture}
             onPointerMoveCapture={handlePointerMoveCapture}
             onPointerUpCapture={handlePointerUpCapture}
             onContextMenu={(e) => e.preventDefault()}
         >
             {isComputing && (
-                <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-[#2c1e17]/80 backdrop-blur-sm pointer-events-auto">
-                    <div className="bg-[#3d2c22]/95 px-4 py-2 rounded-full border border-[#614738] flex items-center gap-2 shadow-xl">
-                        <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-[#d49b6a]"></div>
-                        <span className="text-xs text-[#e5cfbc]">Processing Graph Data...</span>
+                <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-[#f5f1e8]/80 backdrop-blur-sm pointer-events-auto">
+                    <div className="bg-[#fffdf8]/95 px-4 py-2 rounded-full border border-[#d8d1c3] flex items-center gap-2 shadow-lg">
+                        <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-[#1d5c45]"></div>
+                        <span className="text-xs text-[#15211d] font-medium">Processing Graph Data...</span>
                     </div>
                 </div>
             )}
@@ -1627,7 +1622,7 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
 
                 return (
                     <div
-                        className="fixed border-2 border-dashed border-[#d49b6a] bg-[#d49b6a]/15 shadow-2xl pointer-events-none rounded z-[300] backdrop-blur-[1px]"
+                        className="fixed border-2 border-dashed border-[#1d5c45] bg-[#1d5c45]/15 shadow-2xl pointer-events-none rounded z-[300] backdrop-blur-[1px]"
                         style={{
                             left: boxLeft,
                             top: boxTop,
@@ -1635,8 +1630,8 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
                             height: squareSize,
                         }}
                     >
-                        <div className="absolute -top-6 left-0 px-2 py-0.5 rounded bg-[#3d2c22]/95 border border-[#614738] text-[10px] font-mono font-medium text-[#d49b6a] whitespace-nowrap shadow-md flex items-center gap-1">
-                            {is3D ? <Box className="w-3 h-3 text-[#d49b6a]" /> : <Square className="w-3 h-3 text-[#d49b6a]" />}
+                        <div className="absolute -top-6 left-0 px-2 py-0.5 rounded bg-[#fffdf8]/95 border border-[#d8d1c3] text-[10px] font-mono font-medium text-[#1d5c45] whitespace-nowrap shadow-md flex items-center gap-1">
+                            {is3D ? <Box className="w-3 h-3 text-[#1d5c45]" /> : <Square className="w-3 h-3 text-[#1d5c45]" />}
                             {is3D ? '3D Cube Select' : '2D Square Select'}
                         </div>
                     </div>
@@ -1645,18 +1640,18 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
 
             {/* Controls Portal: rendered into Sidebar via portal */}
             {portalReady && portalSlotRef.current && createPortal(
-                <div style={{ display: 'block', width: '100%' }} className="space-y-2 text-xs text-[#d6c3b4]">
+                <div style={{ display: 'block', width: '100%' }} className="space-y-2 text-xs text-[#52605a]">
 
                     {/* Column Selection */}
                     {columns.length > 0 ? (
-                        <div style={{ width: '100%' }} className="pt-3 border-t border-[#614738]">
-                            <label htmlFor="color-by-select" className="block text-[#d6c3b4] mb-1 text-xs">Color By:</label>
+                        <div style={{ width: '100%' }} className="pt-3 border-t border-[#d8d1c3]">
+                            <label htmlFor="color-by-select" className="block text-[#52605a] mb-1 text-xs font-medium">Color By:</label>
                             <select
                                 id="color-by-select"
                                 value={selectedColumn}
                                 onChange={(e) => setSelectedColumn(e.target.value)}
                                 style={{ width: '100%' }}
-                                className="border rounded px-2 py-1.5 focus:outline-none focus:border-[#d49b6a] transition-colors text-xs bg-[#523d30] border-[#755745] text-[#fbf5f0]"
+                                className="border rounded px-2 py-1.5 focus:outline-none focus:border-[#1d5c45] transition-colors text-xs bg-[#f5f1e8] border-[#d8d1c3] text-[#15211d]"
                             >
                                 {columns.map(col => (
                                     <option key={col.name} value={col.name}>
@@ -1666,28 +1661,28 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
                             </select>
                         </div>
                     ) : (
-                        <div style={{ width: '100%' }} className="pt-3 border-t border-[#614738]">
-                            <div className="text-[11px] text-amber-300/90 bg-[#4f3a2e]/60 border border-amber-600/40 rounded-lg p-2.5 leading-relaxed">
+                        <div style={{ width: '100%' }} className="pt-3 border-t border-[#d8d1c3]">
+                            <div className="text-[11px] text-[#ed765d] bg-[#ed765d]/10 border border-[#ed765d]/30 rounded-lg p-2.5 leading-relaxed font-medium">
                                 ⚠️ <b>original_data missing</b>: Variable coloring and feature distributions are disabled.
                             </div>
                         </div>
                     )}
 
-                    <div style={{ width: '100%' }} className="pt-3 border-t border-[#614738] space-y-2.5">
+                    <div style={{ width: '100%' }} className="pt-3 border-t border-[#d8d1c3] space-y-2.5">
 
                         <button
                             onClick={() => setIs3D(!is3D)}
-                            className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg transition-all border font-medium active:scale-95 bg-[#523d30] hover:bg-[#634b3c] text-[#fbf5f0] border-[#755745] hover:border-[#8f6b55]"
+                            className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg transition-all border font-medium active:scale-95 bg-[#f5f1e8] hover:bg-[#ebe5d9] text-[#15211d] border-[#d8d1c3] hover:border-[#b8af9f]"
                         >
-                            {is3D ? <Square className="w-3.5 h-3.5" /> : <Box className="w-3.5 h-3.5" />}
+                            {is3D ? <Square className="w-3.5 h-3.5 text-[#1d5c45]" /> : <Box className="w-3.5 h-3.5 text-[#1d5c45]" />}
                             Switch to {is3D ? '2D' : '3D'}
                         </button>
 
                         <button
                             onClick={handleDownloadNodes}
-                            className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg transition-all border font-medium active:scale-95 bg-[#523d30] hover:bg-[#634b3c] text-[#fbf5f0] border-[#755745] hover:border-[#8f6b55]"
+                            className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg transition-all border font-medium active:scale-95 bg-[#f5f1e8] hover:bg-[#ebe5d9] text-[#15211d] border-[#d8d1c3] hover:border-[#b8af9f]"
                         >
-                            <Download className="w-3.5 h-3.5" /> Download Nodes CSV
+                            <Download className="w-3.5 h-3.5 text-[#1d5c45]" /> Download Nodes CSV
                         </button>
                         <button
                             onClick={handleDownloadData}
@@ -1695,11 +1690,11 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
                             title={!data.originalData ? "Unavailable: original_data was not included in this JSON" : undefined}
                             className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-lg transition-all border font-medium active:scale-95 ${
                                 !data.originalData
-                                    ? 'opacity-40 cursor-not-allowed bg-[#433227] text-[#9c897c] border-[#594234]'
-                                    : 'bg-[#523d30] hover:bg-[#634b3c] text-[#fbf5f0] border-[#755745] hover:border-[#8f6b55]'
+                                    ? 'opacity-40 cursor-not-allowed bg-[#ebe5d9]/60 text-[#52605a] border-[#d8d1c3]'
+                                    : 'bg-[#f5f1e8] hover:bg-[#ebe5d9] text-[#15211d] border-[#d8d1c3] hover:border-[#b8af9f]'
                             }`}
                         >
-                            <Download className="w-3.5 h-3.5" /> Download Original Data
+                            <Download className="w-3.5 h-3.5 text-[#1d5c45]" /> Download Original Data
                         </button>
 
                         {/* Switch Label / Variable Type Button */}
@@ -1709,19 +1704,19 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
                             title={selectedColumn ? `Toggle '${selectedColumn}' between Categorical and Numerical` : 'Select a variable first'}
                             className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-lg transition-all border font-medium active:scale-95 ${
                                 !selectedColumn
-                                    ? 'opacity-40 cursor-not-allowed bg-[#433227] text-[#9c897c] border-[#594234]'
-                                    : 'bg-[#523d30] hover:bg-[#634b3c] text-[#fbf5f0] border-[#755745] hover:border-[#8f6b55]'
+                                    ? 'opacity-40 cursor-not-allowed bg-[#ebe5d9]/60 text-[#52605a] border-[#d8d1c3]'
+                                    : 'bg-[#f5f1e8] hover:bg-[#ebe5d9] text-[#15211d] border-[#d8d1c3] hover:border-[#b8af9f]'
                             }`}
                         >
-                            <ArrowRightLeft className="w-3.5 h-3.5 text-[#d49b6a]" />
+                            <ArrowRightLeft className="w-3.5 h-3.5 text-[#1d5c45]" />
                             <span>
                                 Switch to {columns.find(c => c.name === selectedColumn)?.type === 'numerical' ? 'Categorical' : 'Numerical'}
                             </span>
                         </button>
 
-                        <label className="block w-full cursor-pointer px-3 py-2.5 rounded-lg transition-colors border text-center text-xs font-medium bg-[#523d30] hover:bg-[#634b3c] text-[#fbf5f0] border-[#755745] hover:border-[#8f6b55]">
+                        <label className="block w-full cursor-pointer px-3 py-2.5 rounded-lg transition-colors border text-center text-xs font-medium bg-[#f5f1e8] hover:bg-[#ebe5d9] text-[#15211d] border-[#d8d1c3] hover:border-[#b8af9f]">
                             <span className="flex items-center justify-center gap-2">
-                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m-4-4v12" /></svg>
+                                <svg className="w-3.5 h-3.5 text-[#1d5c45]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m-4-4v12" /></svg>
                                 Upload JSON
                             </span>
                             <input type="file" className="hidden" accept=".json" onChange={handleFileUpload} />
@@ -1733,33 +1728,33 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
 
             {/* Bottom Interaction Guide Hint */}
             <div className="absolute bottom-6 left-[320px] z-20 pointer-events-none">
-                <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#3d2c22]/90 backdrop-blur-md border border-[#614738] text-[11px] text-[#af9684] shadow-lg">
-                    <span className="font-semibold text-[#d49b6a]">Shift + Drag</span> Box/Cube Select
-                    <span className="text-[#614738]">•</span>
-                    <span className="font-semibold text-[#e5cfbc]">Shift + Click</span> Multi-Select
-                    <span className="text-[#614738]">•</span>
-                    <span className="font-semibold text-[#e5cfbc]">Click</span> Inspect
-                    <span className="text-[#614738]">•</span>
-                    <span className="font-semibold text-[#e5cfbc]">Right Click</span> Pan
-                    <span className="text-[#614738]">•</span>
-                    <span className="font-semibold text-[#e5cfbc]">Blank</span> Clear
+                <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#fffdf8]/95 backdrop-blur-md border border-[#d8d1c3] text-[11px] text-[#52605a] shadow-[0_4px_16px_rgba(21,33,29,0.06)]">
+                    <span className="font-semibold text-[#1d5c45]">Shift + Drag</span> Box/Cube Select
+                    <span className="text-[#d8d1c3]">•</span>
+                    <span className="font-semibold text-[#15211d]">Shift + Click</span> Multi-Select
+                    <span className="text-[#d8d1c3]">•</span>
+                    <span className="font-semibold text-[#15211d]">Click</span> Inspect
+                    <span className="text-[#d8d1c3]">•</span>
+                    <span className="font-semibold text-[#15211d]">Right Click</span> Pan
+                    <span className="text-[#d8d1c3]">•</span>
+                    <span className="font-semibold text-[#15211d]">Blank</span> Clear
                 </div>
             </div>
 
             {/* Right Panel: Legend + Mapper Analytics + Node / Group Inspector */}
             <div 
-                className="absolute top-6 bottom-6 right-6 z-[100] pointer-events-none flex flex-col gap-1.5 w-[350px] overflow-hidden"
+                className="absolute top-5 bottom-5 right-5 z-[100] pointer-events-none flex flex-col gap-1.5 w-[350px] overflow-hidden"
                 style={activeSplitter ? { userSelect: 'none', cursor: 'row-resize' } : undefined}
             >
                 {/* Legend Card */}
                 <div 
-                    className="backdrop-blur-xl border border-[#614738] p-3 rounded-xl shadow-2xl pointer-events-auto w-full bg-[#3d2c22]/95 text-[#d6c3b4] flex flex-col shrink-0 overflow-hidden"
+                    className="backdrop-blur-xl border border-[#d8d1c3] p-3 rounded-xl shadow-[0_12px_40px_rgba(21,33,29,0.08)] pointer-events-auto w-full bg-[#fffdf8]/95 text-[#15211d] flex flex-col shrink-0 overflow-hidden"
                     style={{ height: `${legendHeight}px` }}
                 >
                     <div className="flex items-center justify-between mb-1.5 shrink-0">
-                        <h4 className="font-bold text-xs text-[#fdf8f4] uppercase tracking-wider">Legend</h4>
+                        <h4 className="font-bold text-xs text-[#15211d] uppercase tracking-wider">Legend</h4>
                         {selectedColumn && (
-                            <span className="text-[10px] text-[#d49b6a] font-mono truncate max-w-[150px]" title={selectedColumn}>
+                            <span className="text-[10px] text-[#1d5c45] font-mono truncate max-w-[150px]" title={selectedColumn}>
                                 {selectedColumn}
                             </span>
                         )}
@@ -1767,7 +1762,7 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
                     {columns.find(c => c.name === selectedColumn)?.type === 'numerical' && columnStats ? (
                         <div className="flex flex-col gap-1.5 justify-center flex-1">
                             <div className="h-3 w-full rounded" style={{ background: 'linear-gradient(to right, hsl(240, 70%, 50%), hsl(180, 70%, 50%), hsl(120, 70%, 50%), hsl(60, 70%, 50%), hsl(0, 70%, 50%))' }}></div>
-                            <div className="flex justify-between text-[11px] text-[#af9684] font-mono">
+                            <div className="flex justify-between text-[11px] text-[#52605a] font-mono">
                                 <span>{columnStats.min.toFixed(2)}</span>
                                 <span>{columnStats.max.toFixed(2)}</span>
                             </div>
@@ -1775,15 +1770,15 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
                     ) : categoricalLegend.length > 0 ? (
                         <div className="flex flex-wrap items-center gap-1.5 overflow-y-auto pr-1 flex-1 content-start" style={{ scrollbarWidth: 'thin' }}>
                             {categoricalLegend.map(item => (
-                                <div key={item.label} className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-[#4f3a2e]/70 border border-[#6b503f]/50 shrink-0 text-xs shadow-sm">
+                                <div key={item.label} className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-[#f5f1e8] border border-[#d8d1c3] shrink-0 text-xs shadow-sm">
                                     <div className="w-2.5 h-2.5 rounded-full shrink-0 shadow-sm" style={{ background: item.color }} />
-                                    <span className="font-medium text-[#d6c3b4] truncate max-w-[110px]" title={item.label}>{item.label}</span>
+                                    <span className="font-medium text-[#15211d] truncate max-w-[110px]" title={item.label}>{item.label}</span>
                                 </div>
                             ))}
                         </div>
                     ) : (
                         <div className="flex items-center justify-center flex-1">
-                            <span className="text-xs text-[#9e8777] italic">No legend data</span>
+                            <span className="text-xs text-[#65706a] italic">No legend data</span>
                         </div>
                     )}
                 </div>
@@ -1794,27 +1789,27 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
                     className="w-full h-2.5 -my-0.5 cursor-row-resize flex items-center justify-center group pointer-events-auto select-none z-10 shrink-0"
                     title="Drag to resize Legend"
                 >
-                    <div className="w-10 h-1 rounded-full bg-[#614738]/70 group-hover:bg-[#d49b6a] group-active:bg-[#d49b6a] transition-colors" />
+                    <div className="w-10 h-1 rounded-full bg-[#d8d1c3] group-hover:bg-[#1d5c45] group-active:bg-[#1d5c45] transition-colors" />
                 </div>
 
                 {/* Mapper Analytics Card */}
                 {mapperStats && (
                     <div 
-                        className="flex flex-col backdrop-blur-xl border border-[#614738] rounded-xl shadow-2xl pointer-events-auto w-full overflow-hidden bg-[#3d2c22]/95 text-[#d6c3b4] shrink-0"
+                        className="flex flex-col backdrop-blur-xl border border-[#d8d1c3] rounded-xl shadow-[0_12px_40px_rgba(21,33,29,0.08)] pointer-events-auto w-full overflow-hidden bg-[#fffdf8]/95 text-[#15211d] shrink-0"
                         style={{ height: isAnalyticsOpen ? `${analyticsHeight}px` : 'auto' }}
                     >
                         <button
                             onClick={() => setIsAnalyticsOpen(v => !v)}
-                            className="w-full flex items-center justify-between px-4 py-2.5 font-bold text-sm tracking-wide text-[#fdf8f4] hover:bg-[#523d30]/60 transition-colors shrink-0"
+                            className="w-full flex items-center justify-between px-4 py-2.5 font-bold text-sm tracking-wide text-[#15211d] hover:bg-[#f5f1e8]/80 transition-colors shrink-0"
                         >
                             <span className="flex items-center gap-2">
-                                <BarChart2 className="w-4 h-4 text-[#d49b6a]" />
+                                <BarChart2 className="w-4 h-4 text-[#1d5c45]" />
                                 Graph Analytics
                             </span>
-                            {isAnalyticsOpen ? <ChevronDown className="w-3.5 h-3.5 shrink-0 text-[#af9684]" /> : <ChevronRight className="w-3.5 h-3.5 shrink-0 text-[#af9684]" />}
+                            {isAnalyticsOpen ? <ChevronDown className="w-3.5 h-3.5 shrink-0 text-[#52605a]" /> : <ChevronRight className="w-3.5 h-3.5 shrink-0 text-[#52605a]" />}
                         </button>
                         {isAnalyticsOpen && (
-                            <div className="border-t border-[#614738] px-4 pb-4 pt-3 space-y-3.5 text-xs overflow-y-auto flex-1" style={{ scrollbarWidth: 'thin' }}>
+                            <div className="border-t border-[#d8d1c3] px-4 pb-4 pt-3 space-y-3.5 text-xs overflow-y-auto flex-1" style={{ scrollbarWidth: 'thin' }}>
                                 <div className="grid grid-cols-2 gap-2">
                                     {[
                                         { label: 'Nodes', value: mapperStats.nodeCount },
@@ -1822,20 +1817,20 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
                                         { label: 'Components', value: mapperStats.connectedComponents },
                                         { label: 'Max Size', value: mapperStats.maxClusterSize },
                                     ].map(({ label, value }) => (
-                                        <div key={label} className="rounded-lg px-2.5 py-2 text-center bg-[#4f3a2e] border border-[#6b503f]">
-                                            <div className="text-[11px] font-medium text-[#af9684]">{label}</div>
-                                            <div className="text-base font-bold font-mono text-[#fdf8f4]">{value}</div>
+                                        <div key={label} className="rounded-lg px-2.5 py-2 text-center bg-[#f5f1e8] border border-[#d8d1c3]">
+                                            <div className="text-[11px] font-medium text-[#52605a]">{label}</div>
+                                            <div className="text-base font-bold font-mono text-[#15211d]">{value}</div>
                                         </div>
                                     ))}
                                 </div>
-                                <div className="text-xs font-mono text-[#af9684]">
-                                    Avg cluster size: <span className="text-[#e5cfbc] font-semibold">{mapperStats.avgClusterSize.toFixed(1)}</span>
+                                <div className="text-xs font-mono text-[#52605a]">
+                                    Avg cluster size: <span className="text-[#15211d] font-semibold">{mapperStats.avgClusterSize.toFixed(1)}</span>
                                 </div>
                                 <div>
-                                    <p className="text-xs font-semibold mb-2 text-[#e5cfbc]">Cluster Size Distribution</p>
+                                    <p className="text-xs font-semibold mb-2 text-[#15211d]">Cluster Size Distribution</p>
                                     {(() => {
                                         const maxCount = Math.max(...mapperStats.clusterSizeHist.map(b => b.count), 1);
-                                        const barColor = '#3b82f6';
+                                        const barColor = '#1d5c45';
                                         const W = 290, H = 60, pad = 14;
                                         const bw = (W - pad - 4) / mapperStats.clusterSizeHist.length;
                                         return (
@@ -1846,23 +1841,23 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
                                                     const y = H - bh;
                                                     return (
                                                         <g key={i}>
-                                                            <rect x={x + 1} y={y} width={bw - 4} height={bh} rx={2} fill={barColor} opacity={0.9} />
-                                                            <text x={x + bw / 2} y={H + 13} textAnchor="middle" fontSize={8} fill="#af9684">{b.bin}</text>
-                                                            {b.count > 0 && <text x={x + bw / 2} y={y - 3} textAnchor="middle" fontSize={8.5} fontWeight="600" fill="#fdf8f4">{b.count}</text>}
+                                                            <rect x={x + 1} y={y} width={bw - 4} height={bh} rx={2} fill={barColor} opacity={0.88} />
+                                                            <text x={x + bw / 2} y={H + 13} textAnchor="middle" fontSize={8} fill="#52605a">{b.bin}</text>
+                                                            {b.count > 0 && <text x={x + bw / 2} y={y - 3} textAnchor="middle" fontSize={8.5} fontWeight="600" fill="#15211d">{b.count}</text>}
                                                         </g>
                                                     );
                                                 })}
-                                                <line x1={pad} y1={0} x2={pad} y2={H} stroke="#6b503f" strokeWidth={1} />
-                                                <line x1={pad} y1={H} x2={W} y2={H} stroke="#6b503f" strokeWidth={1} />
+                                                <line x1={pad} y1={0} x2={pad} y2={H} stroke="#d8d1c3" strokeWidth={1} />
+                                                <line x1={pad} y1={H} x2={W} y2={H} stroke="#d8d1c3" strokeWidth={1} />
                                             </svg>
                                         );
                                     })()}
                                 </div>
                                 <div>
-                                    <p className="text-xs font-semibold mb-2 text-[#e5cfbc]">Degree Distribution</p>
+                                    <p className="text-xs font-semibold mb-2 text-[#15211d]">Degree Distribution</p>
                                     {(() => {
                                         const maxCount = Math.max(...mapperStats.degreeHist.map(b => b.count), 1);
-                                        const barColor = '#8b5cf6';
+                                        const barColor = '#2a7a5c';
                                         const W = 290, H = 60, pad = 14;
                                         const bw = (W - pad - 4) / mapperStats.degreeHist.length;
                                         return (
@@ -1873,14 +1868,14 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
                                                     const y = H - bh;
                                                     return (
                                                         <g key={i}>
-                                                            <rect x={x + 1} y={y} width={bw - 4} height={bh} rx={2} fill={barColor} opacity={0.9} />
-                                                            <text x={x + bw / 2} y={H + 13} textAnchor="middle" fontSize={8} fill="#af9684">{b.bin}</text>
-                                                            {b.count > 0 && <text x={x + bw / 2} y={y - 3} textAnchor="middle" fontSize={8.5} fontWeight="600" fill="#fdf8f4">{b.count}</text>}
+                                                            <rect x={x + 1} y={y} width={bw - 4} height={bh} rx={2} fill={barColor} opacity={0.88} />
+                                                            <text x={x + bw / 2} y={H + 13} textAnchor="middle" fontSize={8} fill="#52605a">{b.bin}</text>
+                                                            {b.count > 0 && <text x={x + bw / 2} y={y - 3} textAnchor="middle" fontSize={8.5} fontWeight="600" fill="#15211d">{b.count}</text>}
                                                         </g>
                                                     );
                                                 })}
-                                                <line x1={pad} y1={0} x2={pad} y2={H} stroke="#6b503f" strokeWidth={1} />
-                                                <line x1={pad} y1={H} x2={W} y2={H} stroke="#6b503f" strokeWidth={1} />
+                                                <line x1={pad} y1={0} x2={pad} y2={H} stroke="#d8d1c3" strokeWidth={1} />
+                                                <line x1={pad} y1={H} x2={W} y2={H} stroke="#d8d1c3" strokeWidth={1} />
                                             </svg>
                                         );
                                     })()}
@@ -1888,12 +1883,12 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
                                 {/* Label Distribution */}
                                 {mapperStats.labelDist && mapperStats.labelDist.length > 0 && (
                                     <div>
-                                        <p className="text-xs font-semibold mb-2 text-[#e5cfbc]">Label Distribution</p>
+                                        <p className="text-xs font-semibold mb-2 text-[#15211d]">Label Distribution</p>
                                         {mapperStats.labelDist.map(ld => {
-                                            const COLORS_CYCLE = ['#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#ef4444', '#06b6d4', '#ec4899', '#f97316'];
+                                            const COLORS_CYCLE = ['#1d5c45', '#ed765d', '#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#06b6d4', '#ec4899'];
                                             return (
                                                 <div key={ld.col} className="mb-3">
-                                                    <p className="text-[11px] uppercase tracking-wider mb-1.5 text-[#af9684] font-medium">{ld.col}</p>
+                                                    <p className="text-[11px] uppercase tracking-wider mb-1.5 text-[#52605a] font-medium">{ld.col}</p>
                                                     <div className="flex w-full h-3.5 rounded overflow-hidden mb-2">
                                                         {ld.counts.map((c, i) => (
                                                             <div
@@ -1907,8 +1902,8 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
                                                         {ld.counts.map((c, i) => (
                                                             <div key={c.label} className="flex items-center gap-2">
                                                                 <div className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: COLORS_CYCLE[i % COLORS_CYCLE.length] }} />
-                                                                <span className="text-xs truncate text-[#d6c3b4]" title={c.label}>{c.label}</span>
-                                                                <span className="text-xs font-mono ml-auto shrink-0 text-[#af9684]">{c.count} ({(c.pct * 100).toFixed(0)}%)</span>
+                                                                <span className="text-xs truncate text-[#15211d]" title={c.label}>{c.label}</span>
+                                                                <span className="text-xs font-mono ml-auto shrink-0 text-[#52605a]">{c.count} ({(c.pct * 100).toFixed(0)}%)</span>
                                                             </div>
                                                         ))}
                                                     </div>
@@ -1920,10 +1915,10 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
 
                                 {/* Mapper Parameters */}
                                 {data.inputParams && typeof data.inputParams === 'object' && (
-                                    <div className="pt-2.5 border-t border-[#614738]">
+                                    <div className="pt-2.5 border-t border-[#d8d1c3]">
                                         <div className="flex items-center justify-between mb-2">
-                                            <p className="text-xs font-semibold text-[#e5cfbc]">Mapper Parameters</p>
-                                            <span className="text-[10px] text-[#af9684] italic">scrollable</span>
+                                            <p className="text-xs font-semibold text-[#15211d]">Mapper Parameters</p>
+                                            <span className="text-[10px] text-[#52605a] italic">scrollable</span>
                                         </div>
                                         <div className="grid grid-cols-2 gap-1.5 text-xs font-mono max-h-48 overflow-y-auto pr-1" style={{ scrollbarWidth: 'thin' }}>
                                             {Object.entries(data.inputParams).map(([k, v]) => {
@@ -1931,12 +1926,12 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
                                                 return (
                                                     <div
                                                         key={k}
-                                                        className="p-2 rounded bg-[#4f3a2e] border border-[#6b503f] overflow-x-auto whitespace-nowrap select-text cursor-grab active:cursor-grabbing"
+                                                        className="p-2 rounded bg-[#f5f1e8] border border-[#d8d1c3] overflow-x-auto whitespace-nowrap select-text cursor-grab active:cursor-grabbing"
                                                         style={{ scrollbarWidth: 'thin' }}
                                                         title={`${k}: ${formattedVal}`}
                                                     >
-                                                        <span className="text-[#af9684]">{k}: </span>
-                                                        <span className="text-[#fdf8f4] font-semibold">{formattedVal}</span>
+                                                        <span className="text-[#52605a]">{k}: </span>
+                                                        <span className="text-[#15211d] font-semibold">{formattedVal}</span>
                                                     </div>
                                                 );
                                             })}
@@ -1955,45 +1950,45 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
                         className="w-full h-2.5 -my-0.5 cursor-row-resize flex items-center justify-center group pointer-events-auto select-none z-10 shrink-0"
                         title="Drag up/down to resize Graph Analytics & Node Inspector"
                     >
-                        <div className="w-10 h-1 rounded-full bg-[#614738]/70 group-hover:bg-[#d49b6a] group-active:bg-[#d49b6a] transition-colors" />
+                        <div className="w-10 h-1 rounded-full bg-[#d8d1c3] group-hover:bg-[#1d5c45] group-active:bg-[#1d5c45] transition-colors" />
                     </div>
                 )}
 
                 {/* Node & Group Inspector: Click or Shift-Drag to Explore */}
-                <div className="flex-1 flex flex-col backdrop-blur-xl border border-[#614738] rounded-xl shadow-2xl pointer-events-auto w-full overflow-hidden bg-[#3d2c22]/95 text-[#d6c3b4]">
-                    <div className="flex items-center gap-2.5 px-4 py-3.5 border-b border-[#614738]">
+                <div className="flex-1 flex flex-col backdrop-blur-xl border border-[#d8d1c3] rounded-xl shadow-[0_12px_40px_rgba(21,33,29,0.08)] pointer-events-auto w-full overflow-hidden bg-[#fffdf8]/95 text-[#15211d]">
+                    <div className="flex items-center gap-2.5 px-4 py-3.5 border-b border-[#d8d1c3]">
                         {selectedGroupEDA ? (
                             selectedGroupEDA.isGroup ? (
-                                <div className="p-1 rounded bg-[#523d30] border border-[#755745] shrink-0">
-                                    <Layers className="w-3.5 h-3.5 text-[#d49b6a]" />
+                                <div className="p-1 rounded bg-[#f5f1e8] border border-[#d8d1c3] shrink-0">
+                                    <Layers className="w-3.5 h-3.5 text-[#1d5c45]" />
                                 </div>
                             ) : (
                                 <div 
-                                    className="w-3 h-3 rounded-full shrink-0 shadow-sm border border-black/30" 
-                                    style={{ background: nodeColors[selectedGroupEDA.nodeIds[0]] || '#3b82f6' }} 
+                                    className="w-3 h-3 rounded-full shrink-0 shadow-sm border border-[#d8d1c3]" 
+                                    style={{ background: nodeColors[selectedGroupEDA.nodeIds[0]] || '#1d5c45' }} 
                                 />
                             )
                         ) : (
-                            <div className="w-2.5 h-2.5 rounded-full shrink-0 bg-[#614738]" />
+                            <div className="w-2.5 h-2.5 rounded-full shrink-0 bg-[#d8d1c3]" />
                         )}
 
-                        <span className="font-bold text-sm text-[#fdf8f4] truncate">
+                        <span className="font-bold text-sm text-[#15211d] truncate">
                             {selectedGroupEDA ? selectedGroupEDA.nodeName : 'Node Inspector'}
                         </span>
 
                         {selectedGroupEDA && (
                             <div className="flex items-center gap-1.5 ml-auto">
                                 {selectedGroupEDA.isGroup && (
-                                    <span className="text-[11px] px-2 py-0.5 rounded-full font-mono bg-[#4f3a2e] text-[#d49b6a] border border-[#6b503f] whitespace-nowrap">
+                                    <span className="text-[11px] px-2 py-0.5 rounded-full font-mono bg-[#f5f1e8] text-[#1d5c45] border border-[#d8d1c3] whitespace-nowrap font-medium">
                                         {selectedGroupEDA.nodeCount} nodes
                                     </span>
                                 )}
-                                <span className="text-[11px] px-2 py-0.5 rounded-full font-mono bg-[#4f3a2e] text-[#e5cfbc] border border-[#6b503f] whitespace-nowrap">
+                                <span className="text-[11px] px-2 py-0.5 rounded-full font-mono bg-[#f5f1e8] text-[#15211d] border border-[#d8d1c3] whitespace-nowrap font-medium">
                                     {selectedGroupEDA.uniquePoints} pts
                                 </span>
                                 <button 
                                     onClick={() => setSelectedNodeIds(new Set())} 
-                                    className="p-1 rounded hover:bg-[#523d30] transition-colors text-[#af9684] hover:text-[#fdf8f4]"
+                                    className="p-1 rounded hover:bg-[#f5f1e8] transition-colors text-[#52605a] hover:text-[#15211d]"
                                     title="Deselect"
                                 >
                                     <X className="w-3.5 h-3.5" />
@@ -2006,10 +2001,10 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
                         <div className="overflow-y-auto overflow-x-hidden flex-1" style={{ scrollbarWidth: 'thin', minHeight: 0 }}>
                             {selectedGroupEDA.cols.length === 0 ? (
                                 <div className="py-8 px-4 text-center space-y-2">
-                                    <p className="text-sm text-[#e5cfbc] font-semibold">Feature Distributions Unavailable</p>
-                                    <p className="text-xs text-[#af9684] leading-relaxed">
+                                    <p className="text-sm text-[#15211d] font-semibold">Feature Distributions Unavailable</p>
+                                    <p className="text-xs text-[#52605a] leading-relaxed">
                                         Raw feature rows were not included in this JSON (<code>original_data</code> missing).
-                                        <br />Selected: <span className="font-mono text-amber-300 font-bold">{selectedGroupEDA.nodeCount}</span> {selectedGroupEDA.nodeCount > 1 ? 'nodes' : 'node'} ({selectedGroupEDA.uniquePoints} data points).
+                                        <br />Selected: <span className="font-mono text-[#1d5c45] font-bold">{selectedGroupEDA.nodeCount}</span> {selectedGroupEDA.nodeCount > 1 ? 'nodes' : 'node'} ({selectedGroupEDA.uniquePoints} data points).
                                     </p>
                                 </div>
                             ) : (
@@ -2020,10 +2015,10 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
                                         const W = Math.max(100, col.counts.length * 32 + 20);
                                         const H = 50, pad = 16;
                                         const bw = (W - pad) / col.counts.length;
-                                        const COLORS = ['#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#ef4444', '#06b6d4', '#ec4899', '#f97316'];
+                                        const COLORS = ['#1d5c45', '#ed765d', '#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#06b6d4', '#ec4899'];
                                         return (
                                             <div key={col.name} className="flex flex-col items-start shrink-0">
-                                                <p className="text-[11px] font-semibold mb-1 uppercase tracking-wider text-[#af9684]">{col.name}</p>
+                                                <p className="text-[11px] font-semibold mb-1 uppercase tracking-wider text-[#52605a]">{col.name}</p>
                                                 <svg width={W} height={H + 22} className="overflow-visible">
                                                     {col.counts.map((c, i) => {
                                                         const bh = Math.max(3, (c.count / maxC) * H);
@@ -2031,14 +2026,14 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
                                                         const y = H - bh;
                                                         return (
                                                             <g key={c.label}>
-                                                                <rect x={x + 1} y={y} width={bw - 4} height={bh} rx={2} fill={COLORS[i % COLORS.length]} opacity={0.9} />
-                                                                <text x={x + bw / 2} y={H + 11} textAnchor="middle" fontSize={8} fill="#af9684" transform={`rotate(-30, ${x + bw / 2}, ${H + 11})`}>{c.label.length > 7 ? c.label.slice(0, 6) + '…' : c.label}</text>
-                                                                {c.count > 0 && <text x={x + bw / 2} y={y - 3} textAnchor="middle" fontSize={8.5} fontWeight="600" fill="#fdf8f4">{c.count}</text>}
+                                                                <rect x={x + 1} y={y} width={bw - 4} height={bh} rx={2} fill={COLORS[i % COLORS.length]} opacity={0.88} />
+                                                                <text x={x + bw / 2} y={H + 11} textAnchor="middle" fontSize={8} fill="#52605a" transform={`rotate(-30, ${x + bw / 2}, ${H + 11})`}>{c.label.length > 7 ? c.label.slice(0, 6) + '…' : c.label}</text>
+                                                                {c.count > 0 && <text x={x + bw / 2} y={y - 3} textAnchor="middle" fontSize={8.5} fontWeight="600" fill="#15211d">{c.count}</text>}
                                                             </g>
                                                         );
                                                     })}
-                                                    <line x1={pad} y1={0} x2={pad} y2={H} stroke="#6b503f" strokeWidth={1} />
-                                                    <line x1={pad} y1={H} x2={W} y2={H} stroke="#6b503f" strokeWidth={1} />
+                                                    <line x1={pad} y1={0} x2={pad} y2={H} stroke="#d8d1c3" strokeWidth={1} />
+                                                    <line x1={pad} y1={H} x2={W} y2={H} stroke="#d8d1c3" strokeWidth={1} />
                                                 </svg>
                                             </div>
                                         );
@@ -2049,8 +2044,8 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
                                         const bw = (W - pad) / col.bins.length;
                                         return (
                                             <div key={col.name} className="flex flex-col items-start shrink-0">
-                                                <p className="text-[11px] font-semibold mb-0.5 uppercase tracking-wider text-[#af9684]">{col.name}</p>
-                                                <p className="text-[10px] font-mono mb-1 text-[#af9684]">μ={col.mean?.toFixed(1)}</p>
+                                                <p className="text-[11px] font-semibold mb-0.5 uppercase tracking-wider text-[#52605a]">{col.name}</p>
+                                                <p className="text-[10px] font-mono mb-1 text-[#52605a]">μ={col.mean?.toFixed(1)}</p>
                                                 <svg width={W} height={H + 22} className="overflow-visible">
                                                     {col.bins.map((b, i) => {
                                                         const bh = Math.max(3, (b.count / maxC) * H);
@@ -2058,14 +2053,14 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
                                                         const y = H - bh;
                                                         return (
                                                             <g key={i}>
-                                                                <rect x={x + 1} y={y} width={bw - 4} height={bh} rx={2} fill={'#3b82f6'} opacity={0.7 + 0.3 * (b.count / maxC)} />
-                                                                <text x={x + bw / 2} y={H + 11} textAnchor="middle" fontSize={7.5} fill="#af9684">{b.bin}</text>
-                                                                {b.count > 0 && <text x={x + bw / 2} y={y - 3} textAnchor="middle" fontSize={8.5} fontWeight="600" fill="#fdf8f4">{b.count}</text>}
+                                                                <rect x={x + 1} y={y} width={bw - 4} height={bh} rx={2} fill={'#1d5c45'} opacity={0.6 + 0.4 * (b.count / maxC)} />
+                                                                <text x={x + bw / 2} y={H + 11} textAnchor="middle" fontSize={7.5} fill="#52605a">{b.bin}</text>
+                                                                {b.count > 0 && <text x={x + bw / 2} y={y - 3} textAnchor="middle" fontSize={8.5} fontWeight="600" fill="#15211d">{b.count}</text>}
                                                             </g>
                                                         );
                                                     })}
-                                                    <line x1={pad} y1={0} x2={pad} y2={H} stroke="#6b503f" strokeWidth={1} />
-                                                    <line x1={pad} y1={H} x2={W} y2={H} stroke="#6b503f" strokeWidth={1} />
+                                                    <line x1={pad} y1={0} x2={pad} y2={H} stroke="#d8d1c3" strokeWidth={1} />
+                                                    <line x1={pad} y1={H} x2={W} y2={H} stroke="#d8d1c3" strokeWidth={1} />
                                                 </svg>
                                             </div>
                                         );
@@ -2076,10 +2071,10 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
                             )}
                         </div>
                     ) : (
-                        <div className="flex-1 flex flex-col items-center justify-center px-4 py-6 gap-2.5 text-[#9e8777]">
-                            <svg className="w-7 h-7 opacity-40" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122" /></svg>
+                        <div className="flex-1 flex flex-col items-center justify-center px-4 py-6 gap-2.5 text-[#65706a]">
+                            <svg className="w-7 h-7 opacity-40 text-[#52605a]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122" /></svg>
                             <p className="text-xs text-center leading-relaxed">
-                                Click a node or hold <span className="text-[#d49b6a] font-semibold">Shift + Drag</span><br />to group & analyze nodes
+                                Click a node or hold <span className="text-[#1d5c45] font-semibold">Shift + Drag</span><br />to group & analyze nodes
                             </p>
                         </div>
                     )}
@@ -2091,17 +2086,17 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
                     ref={fgRef}
                     graphData={data}
                     nodeLabel="desc"
-                    nodeColor={node => nodeColors[node.id!] || (node as any).color || '#3b82f6'}
+                    nodeColor={node => nodeColors[node.id!] || (node as any).color || '#1d5c45'}
                     nodeRelSize={3.5}
                     nodeResolution={28}
                     nodeOpacity={0.96}
                     nodeThreeObject={getNodeThreeObject}
                     nodeThreeObjectExtend={true}
-                    linkColor={() => '#d49b6a50'}
+                    linkColor={() => '#1d5c4535'}
                     linkWidth={0.8}
                     linkResolution={8}
                     linkOpacity={0.5}
-                    backgroundColor="#2c1e17"
+                    backgroundColor="#f5f1e8"
                     showNavInfo={false}
                     rendererConfig={{ antialias: true, alpha: true, powerPreference: 'high-performance' }}
                     onNodeDragEnd={handleNodeDragEnd}
@@ -2117,9 +2112,9 @@ export function MapperGraph({ selectedExample, onCustomUpload, onGraphStats }: M
                     nodeLabel="desc"
                     nodeCanvasObject={drawNode2D}
                     nodePointerAreaPaint={drawNodePointerArea2D}
-                    linkColor={() => '#e2aa7a45'}
+                    linkColor={() => '#1d5c4540'}
                     linkWidth={1}
-                    backgroundColor="#2c1e17"
+                    backgroundColor="#f5f1e8"
                     onNodeDragEnd={handleNodeDragEnd}
                     onNodeClick={handleNodeClick}
                     onBackgroundClick={handleBackgroundClick}
