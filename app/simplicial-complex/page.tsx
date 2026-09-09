@@ -8,6 +8,7 @@ import {
   BookOpen,
   Box,
   Braces,
+  ChevronDown,
   CircleDot,
   MoveRight,
   Sparkles,
@@ -64,12 +65,23 @@ function Matrix({
       {label && <span className="matrix-label">{label}</span>}
       <div className="matrix-scroll">
         <table className="matrix" aria-label={label ?? 'Matrix'}>
-          {colLabels && <thead><tr><th />{colLabels.map((x) => <th key={x}>{x}</th>)}</tr></thead>}
+          {colLabels && (
+            <thead>
+              <tr>
+                {rowLabels && <th />}
+                {colLabels.map((x) => (
+                  <th key={x}>{x}</th>
+                ))}
+              </tr>
+            </thead>
+          )}
           <tbody>
             {data.map((row, i) => (
               <tr key={rowLabels?.[i] ?? i}>
                 {rowLabels && <th>{rowLabels[i]}</th>}
-                {row.map((cell, j) => <td key={j}>{cell}</td>)}
+                {row.map((cell, j) => (
+                  <td key={j}>{cell}</td>
+                ))}
               </tr>
             ))}
           </tbody>
@@ -145,6 +157,14 @@ export default function Home() {
   const [filled, setFilled] = useState(false);
   const [stage, setStage] = useState(3);
   const [laplacianView, setLaplacianView] = useState<'open' | 'filled'>('open');
+  const [openUsage, setOpenUsage] = useState<Record<string, boolean>>({
+    hodge: false,
+    sheaf: false,
+    persistent: false,
+  });
+  const toggleUsage = (key: string) => {
+    setOpenUsage((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
   const stageData = [
     { title: 'Add three vertices', betti: 'β₀ = 3, β₁ = 0', meaning: 'Each vertex begins as its own connected component.' },
     { title: 'Add edge e₀₁', betti: 'β₀ = 2, β₁ = 0', meaning: 'Two components merge; the younger H₀ class dies.' },
@@ -336,9 +356,88 @@ export default function Home() {
       <section className="lesson" id="chapter-04">
         <aside className="chapter-aside"><span className="chapter-no">CHAPTER 04</span><h2>Topological Laplacians</h2><p>Homology records the zero modes. Laplacian spectra retain those modes and add geometric information beyond Betti numbers.</p><div className="chapter-index"><a href="#hodge">4.1 Hodge Laplacian</a><a href="#sheaf">4.2 Sheaf and connection</a><a href="#persistent-lap">4.3 Persistent Laplacian</a></div></aside>
         <article className="chapter-body">
-          <div className="section-block" id="hodge"><p className="kicker">4.1 COMBINATORIAL HODGE LAPLACIAN</p><h3>The Laplacian measures two ways a k-chain can fail to be harmonic</h3><div className="display-math">L<sub>k</sub> = B<sub>k</sub><sup>T</sup>B<sub>k</sub> + B<sub>k+1</sub>B<sub>k+1</sub><sup>T</sup> = L<sub>k</sub><sup>down</sup> + L<sub>k</sub><sup>up</sup></div><p>For a k-chain x, the quadratic energy has a direct meaning:</p><div className="display-math small">x<sup>T</sup>L<sub>k</sub>x = ‖B<sub>k</sub>x‖² + ‖B<sub>k+1</sub><sup>T</sup>x‖²</div><p>The first term detects a nonzero boundary: flow is not closed at shared (k−1)-faces. The second detects interaction with (k+1)-cofaces: the chain has a component that can be explained by higher-dimensional fillings. A zero-energy chain is both closed and orthogonal to all boundaries; it is the unique harmonic representative of a homology class.</p><div className="hodge-split"><div><ArrowDown /><strong>B<sub>k</sub><sup>T</sup>B<sub>k</sub></strong><p>Lower adjacency: k-simplices meet along a (k−1)-face.</p></div><div><ArrowUp /><strong>B<sub>k+1</sub>B<sub>k+1</sub><sup>T</sup></strong><p>Upper adjacency: k-simplices bound the same (k+1)-simplex.</p></div><div className="hodge-theorem"><span>DISCRETE HODGE THEOREM</span><strong>ker L<sub>k</sub> ≅ H<sub>k</sub>(K)</strong><p>The multiplicity of eigenvalue zero is β<sub>k</sub>.</p></div></div><div className="segmented" role="group" aria-label="Toggle the Hodge Laplacian example"><button className={laplacianView === 'open' ? 'active' : ''} onClick={() => setLaplacianView('open')}>Unfilled complex</button><button className={laplacianView === 'filled' ? 'active' : ''} onClick={() => setLaplacianView('filled')}>Add triangular face</button></div><div className="lap-example"><Matrix data={laplacianView === 'open' ? l1Down : l1Filled} rowLabels={['e₀₁', 'e₁₂', 'e₀₂', 'e₂₃']} colLabels={['e₀₁', 'e₁₂', 'e₀₂', 'e₂₃']} label={laplacianView === 'open' ? 'L₁=B₁ᵀB₁' : 'L₁=B₁ᵀB₁+B₂B₂ᵀ'} compact /><div className="spectrum-card"><span>1-LAPLACIAN SPECTRUM</span><Spectrum values={laplacianView === 'open' ? [0, 1, 3, 4] : [1, 3, 3, 4]} color={laplacianView === 'open' ? 'coral' : 'green'} /><p>{laplacianView === 'open' ? 'One zero mode means β₁=1. Its eigenvector is the circulation around the unfilled triangle.' : 'The face removes the zero mode, so β₁=0. The positive eigenvalues still encode connectivity and stiffness.'}</p></div></div><div className="display-math small">C<sub>k</sub> = im B<sub>k</sub><sup>T</sup> ⊕ ker L<sub>k</sub> ⊕ im B<sub>k+1</sub></div></div>
+          <div className="section-block" id="hodge"><p className="kicker">4.1 COMBINATORIAL HODGE LAPLACIAN</p><h3>The Laplacian measures two ways a k-chain can fail to be harmonic</h3><div className="display-math">L<sub>k</sub> = B<sub>k</sub><sup>T</sup>B<sub>k</sub> + B<sub>k+1</sub>B<sub>k+1</sub><sup>T</sup> = L<sub>k</sub><sup>down</sup> + L<sub>k</sub><sup>up</sup></div><p>Here, <strong>B<sub>k</sub></strong> is the k-th boundary matrix representing the boundary operator ∂<sub>k</sub>: C<sub>k</sub> → C<sub>k−1</sub> (mapping oriented k-simplices to their boundary (k−1)-faces), and <strong>B<sub>k+1</sub></strong> is the boundary matrix from (k+1)-simplices to k-simplices. Their transposes B<sup>T</sup> act as coboundary (adjoint) operators.</p><p>For a k-chain x, the quadratic energy has a direct meaning:</p><div className="display-math small">x<sup>T</sup>L<sub>k</sub>x = ‖B<sub>k</sub>x‖² + ‖B<sub>k+1</sub><sup>T</sup>x‖²</div><p>The first term detects a nonzero boundary: flow is not closed at shared (k−1)-faces. The second detects interaction with (k+1)-cofaces: the chain has a component that can be explained by higher-dimensional fillings. A zero-energy chain is both closed and orthogonal to all boundaries; it is the unique harmonic representative of a homology class.</p><div className="hodge-split"><div><ArrowDown /><strong>B<sub>k</sub><sup>T</sup>B<sub>k</sub></strong><p>Lower adjacency: k-simplices meet along a (k−1)-face.</p></div><div><ArrowUp /><strong>B<sub>k+1</sub>B<sub>k+1</sub><sup>T</sup></strong><p>Upper adjacency: k-simplices bound the same (k+1)-simplex.</p></div><div className="hodge-theorem"><span>DISCRETE HODGE THEOREM</span><strong>ker L<sub>k</sub> ≅ H<sub>k</sub>(K)</strong><p>The multiplicity of eigenvalue zero is β<sub>k</sub>.</p></div></div><div className="segmented" role="group" aria-label="Toggle the Hodge Laplacian example"><button className={laplacianView === 'open' ? 'active' : ''} onClick={() => setLaplacianView('open')}>Unfilled complex</button><button className={laplacianView === 'filled' ? 'active' : ''} onClick={() => setLaplacianView('filled')}>Add triangular face</button></div><div className="lap-example"><Matrix data={laplacianView === 'open' ? l1Down : l1Filled} rowLabels={['e₀₁', 'e₁₂', 'e₀₂', 'e₂₃']} colLabels={['e₀₁', 'e₁₂', 'e₀₂', 'e₂₃']} label={laplacianView === 'open' ? 'L₁=B₁ᵀB₁' : 'L₁=B₁ᵀB₁+B₂B₂ᵀ'} compact /><div className="spectrum-card"><span>1-LAPLACIAN SPECTRUM</span><Spectrum values={laplacianView === 'open' ? [0, 1, 3, 4] : [1, 3, 3, 4]} color={laplacianView === 'open' ? 'coral' : 'green'} /><p>{laplacianView === 'open' ? 'One zero mode means β₁=1. Its eigenvector is the circulation around the unfilled triangle.' : 'The face removes the zero mode, so β₁=0. The positive eigenvalues still encode connectivity and stiffness.'}</p></div></div><div className="display-math small">C<sub>k</sub> = im B<sub>k</sub><sup>T</sup> ⊕ ker L<sub>k</sub> ⊕ im B<sub>k+1</sub></div>
 
-          <div className="section-block" id="sheaf"><p className="kicker">4.2 SHEAF AND CONNECTION LAPLACIANS</p><h3>Sheaves compare vector-valued data only after transporting it to a common space</h3><p>A cellular sheaf F assigns a vector space F(v) to every vertex, a vector space F(e) to every edge, and a linear restriction map F<sub>v⊲e</sub>:F(v)→F(e) for every incident vertex-edge pair. The direct sum of vertex stalks is C⁰(G;F). For an oriented edge e:u→v, the coboundary measures disagreement after both endpoint values are mapped into the same edge stalk:</p><div className="display-math">(δx)<sub>e</sub> = F<sub>v⊲e</sub>x<sub>v</sub> − F<sub>u⊲e</sub>x<sub>u</sub>, &nbsp;&nbsp; L<sub>F</sub>=δ<sup>T</sup>δ</div><div className="sheaf-example"><div className="transport-diagram"><span className="panel-label">WORKED ONE-EDGE CONNECTION SHEAF</span><svg viewBox="0 0 440 210" role="img" aria-label="Two two-dimensional stalks compared through an edge by a ninety-degree rotation"><defs><marker id="green-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8z" fill="#1d5c45" /></marker><marker id="coral-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8z" fill="#ed765d" /></marker></defs><line x1="90" y1="120" x2="350" y2="120" className="edge" /><text x="198" y="106" className="edge-label">e : u → v</text><circle cx="90" cy="120" r="12" className="vertex" /><circle cx="350" cy="120" r="12" className="vertex" /><text x="69" y="155">F(u)=ℝ²</text><text x="327" y="155">F(v)=ℝ²</text><path d="M90 120 L90 62" className="vector-arrow" markerEnd="url(#green-arrow)" /><path d="M350 120 L292 120" className="vector-arrow coral" markerEnd="url(#coral-arrow)" /><text x="100" y="66" className="edge-label">xᵤ</text><text x="297" y="103" className="edge-label">R₉₀xᵥ</text></svg><p>Set F<sub>u⊲e</sub>=I and F<sub>v⊲e</sub>=R₉₀. Then δ=[−I&nbsp;R₉₀]. The two endpoint vectors agree globally only when x<sub>u</sub>=R₉₀x<sub>v</sub>.</p></div><div className="matrix-stack"><Matrix data={[[-1, 0, 0, -1], [0, -1, 1, 0]]} colLabels={['u₁', 'u₂', 'v₁', 'v₂']} label="δ = [−I  R₉₀]" compact /><Matrix data={[[1, 0, 0, 1], [0, 1, -1, 0], [0, -1, 1, 0], [1, 0, 0, 1]]} label="Lᶠ = δᵀδ" compact /></div></div><div className="formula-pair"><div><small>ENERGY</small><strong>x<sup>T</sup>L<sub>F</sub>x = ‖R₉₀x<sub>v</sub>−x<sub>u</sub>‖²</strong><p>Zero energy means perfect agreement after transport.</p></div><div><small>CONNECTION LAPLACIAN</small><strong>F<sub>v⊲e</sub>∈O(d)</strong><p>Orthogonal restrictions rotate or reflect vectors without changing their lengths; the Laplacian is an nd×nd block matrix.</p></div></div></div>
+            <button
+              className={`usage-toggle ${openUsage.hodge ? 'is-open' : ''}`}
+              onClick={() => toggleUsage('hodge')}
+              aria-expanded={openUsage.hodge}
+            >
+              <BookOpen size={15} />
+              <span>Published Usage &amp; Research Motivation</span>
+              <ChevronDown size={14} className="chevron" />
+            </button>
+
+            {openUsage.hodge && (
+              <div className="usage-panel">
+                <span className="usage-badge">Why this operator?</span>
+                <h4>Higher-Order Flows, Circulation &amp; Simplicial Convolution</h4>
+                <p>
+                  <strong>Why not standard graph Laplacian L₀:</strong> The classic graph Laplacian <code>L₀ = B₀ᵀB₀</code> only processes scalar values living on vertices. It is completely blind to higher-order geometric flows, such as directional edge flux (currents, traffic flows, fluid dynamics), circulation around triangular cavities, or multi-agent trajectory paths.
+                </p>
+                <p>
+                  The combinatorial Hodge Laplacian <code>Lₖ = Lₖ<sup>down</sup> + Lₖ<sup>up</sup></code> decouples flow into two orthogonal physical behaviors: <strong>lower adjacency</strong> (shared boundary, divergence/conservation) and <strong>upper adjacency</strong> (common coface, curl/circulation). By the Discrete Hodge Theorem, <code>ker Lₖ ≅ Hₖ</code> precisely extracts topological voids, while its non-zero positive eigenvalues quantify high-order diffusion speed and geometric stiffness.
+                </p>
+                <div className="usage-papers-grid">
+                  <div className="usage-paper-card">
+                    <div className="usage-paper-header">
+                      <span className="usage-paper-title">Simplicial Neural Networks (SNNs)</span>
+                      <span className="usage-paper-venue">NeurIPS 2020</span>
+                    </div>
+                    <p className="usage-paper-desc">
+                      Uses the Hodge Laplacian spectrum as an orthonormal Fourier basis (<code>Lₖ = UΛUᵀ</code>) to define convolutional neural networks on simplicial complexes (<code>c ∗ ϕ = ∑ Wᵢ Lₖⁱ c</code>). Successfully used to impute missing collaboration citations on coauthorship complexes and model vector fields where standard GNNs fail.
+                    </p>
+                  </div>
+                  <div className="usage-paper-card">
+                    <div className="usage-paper-header">
+                      <span className="usage-paper-title">Simplicial Attention Networks (SAT)</span>
+                      <span className="usage-paper-venue">ICLR 2022</span>
+                    </div>
+                    <p className="usage-paper-desc">
+                      Explicitly decomposes the Hodge Laplacian into upper and lower adjacencies (<code>Lₖ<sup>up</sup></code> and <code>Lₖ<sup>down</sup></code>) to design signed, orientation-equivariant attention mechanisms, achieving superior accuracy in superpixel classification and particle trajectory classification on 1-chains.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="section-block" id="sheaf"><p className="kicker">4.2 SHEAF AND CONNECTION LAPLACIANS</p><h3>Sheaves compare vector-valued data only after transporting it to a common space</h3><p>A cellular sheaf F assigns a vector space F(v) to every vertex, a vector space F(e) to every edge, and a linear restriction map F<sub>v⊲e</sub>:F(v)→F(e) for every incident vertex-edge pair. The direct sum of vertex stalks is C⁰(G;F). For an oriented edge e:u→v, the coboundary measures disagreement after both endpoint values are mapped into the same edge stalk:</p><div className="display-math">(δx)<sub>e</sub> = F<sub>v⊲e</sub>x<sub>v</sub> − F<sub>u⊲e</sub>x<sub>u</sub>, &nbsp;&nbsp; L<sub>F</sub>=δ<sup>T</sup>δ</div><div className="sheaf-example"><div className="transport-diagram"><span className="panel-label">WORKED ONE-EDGE CONNECTION SHEAF</span><svg viewBox="0 0 440 210" role="img" aria-label="Two two-dimensional stalks compared through an edge by a ninety-degree rotation"><defs><marker id="green-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8z" fill="#1d5c45" /></marker><marker id="coral-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8z" fill="#ed765d" /></marker></defs><line x1="90" y1="120" x2="350" y2="120" className="edge" /><text x="198" y="106" className="edge-label">e : u → v</text><circle cx="90" cy="120" r="12" className="vertex" /><circle cx="350" cy="120" r="12" className="vertex" /><text x="69" y="155">F(u)=ℝ²</text><text x="327" y="155">F(v)=ℝ²</text><path d="M90 120 L90 62" className="vector-arrow" markerEnd="url(#green-arrow)" /><path d="M350 120 L292 120" className="vector-arrow coral" markerEnd="url(#coral-arrow)" /><text x="100" y="66" className="edge-label">xᵤ</text><text x="297" y="103" className="edge-label">R₉₀xᵥ</text></svg><p>Set F<sub>u⊲e</sub>=I and F<sub>v⊲e</sub>=R₉₀. Then δ=[−I&nbsp;R₉₀]. The two endpoint vectors agree globally only when x<sub>u</sub>=R₉₀x<sub>v</sub>.</p></div><div className="matrix-stack"><Matrix data={[[-1, 0, 0, -1], [0, -1, 1, 0]]} colLabels={['u₁', 'u₂', 'v₁', 'v₂']} label="δ = [−I  R₉₀]" compact /><Matrix data={[[1, 0, 0, 1], [0, 1, -1, 0], [0, -1, 1, 0], [1, 0, 0, 1]]} label="Lᶠ = δᵀδ" compact /></div></div><div className="formula-pair"><div><small>ENERGY</small><strong>x<sup>T</sup>L<sub>F</sub>x = ‖R₉₀x<sub>v</sub>−x<sub>u</sub>‖²</strong><p>Zero energy means perfect agreement after transport.</p></div><div><small>CONNECTION LAPLACIAN</small><strong>F<sub>v⊲e</sub>∈O(d)</strong><p>Orthogonal restrictions rotate or reflect vectors without changing their lengths; the Laplacian is an nd×nd block matrix.</p></div></div>
+
+            <button
+              className={`usage-toggle ${openUsage.sheaf ? 'is-open' : ''}`}
+              onClick={() => toggleUsage('sheaf')}
+              aria-expanded={openUsage.sheaf}
+            >
+              <BookOpen size={15} />
+              <span>Published Usage &amp; Research Motivation</span>
+              <ChevronDown size={14} className="chevron" />
+            </button>
+
+            {openUsage.sheaf && (
+              <div className="usage-panel">
+                <span className="usage-badge">Why this operator?</span>
+                <h4>Tackling Heterophily &amp; Over-Smoothing via Parallel Transport</h4>
+                <p>
+                  <strong>Why not scalar Graph or Hodge Laplacians:</strong> Standard graph neural networks assume <em>homophily</em> (connected nodes share similar labels/features). When networks exhibit <strong>heterophily</strong> (connected nodes possess contrasting attributes, such as in molecular dipoles, citation conflicts, or transaction fraud), standard diffusion collapses. Furthermore, stacking multiple GNN layers causes catastrophic <strong>over-smoothing</strong>, where all node representations converge to an uninformative consensus.
+                </p>
+                <p>
+                  A <strong>Cellular Sheaf</strong> equips each vertex and edge with its own vector space (stalk <code>F(v) = ℝᵈ</code>) and orthogonal restriction maps <code>F<sub>v⊲e</sub> ∈ O(d)</code> (the Connection Laplacian, mirroring parallel transport along Riemannian manifolds). Disagreement is measured only <em>after</em> local coordinates are rotated to the shared edge. This enables anti-aligned or orthogonal feature propagation, allowing deep GNNs to retain distinct class representations while mathematically preventing Dirichlet energy collapse.
+                </p>
+                <div className="usage-papers-grid">
+                  <div className="usage-paper-card">
+                    <div className="usage-paper-header">
+                      <span className="usage-paper-title">Sheaf Neural Networks with Connection Laplacians (Conn-NSD)</span>
+                      <span className="usage-paper-venue">ICML 2022</span>
+                    </div>
+                    <p className="usage-paper-desc">
+                      Leverages Riemannian geometry and local PCA tangent-space alignment to construct deterministic orthogonal connection Laplacians on graphs. Achieves state-of-the-art accuracy on heterophilic benchmarks (Texas, Film, Wisconsin) with faster inference and fewer learnable parameters than gradient-learned sheaves.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
 
           <div className="section-block" id="persistent-lap"><p className="kicker">4.3 PERSISTENT LAPLACIAN — FULL WORKED EXAMPLE</p><h3>Build a Laplacian whose kernel is exactly the homology that survives from X to Y</h3><p>Let X be the unfilled triangular cycle with a tail, and let Y=X∪{`{t₀₁₂}`} add the triangular face. We compute the degree-one persistent Laplacian for the pair X⊆Y.</p><div className="persistent-worked"><div><span className="panel-label">EARLY COMPLEX X</span><div className="tiny-complex open"><i /><i /><i /><i /></div><strong>H₁(X)=span([c])</strong><p>c=e₀₁+e₁₂−e₀₂ is closed and not yet fillable.</p></div><ArrowRight /><div><span className="panel-label">LATER COMPLEX Y</span><div className="tiny-complex filled"><i /><i /><i /><i /></div><strong>H₁(Y)=0</strong><p>The new face satisfies ∂₂t₀₁₂=c, so [c] maps to zero.</p></div><ArrowRight /><div className="persistent-result"><span className="panel-label">PERSISTENT GROUP</span><strong>H₁<sup>X,Y</sup>=im(H₁(X)→H₁(Y))=0</strong><p>No one-dimensional class survives across the pair.</p></div></div>
             <div className="plain-definition"><strong>Step 1 — restrict the later chains.</strong><p>C₂<sup>X,Y</sup>={`{d∈C₂(Y) | ∂₂`}<sup>Y</sup>d∈C₁(X){`}`}. Here the only 2-chain is t₀₁₂ and its boundary lies entirely in X, so C₂<sup>X,Y</sup>=span(t₀₁₂) and ∂₂<sup>X,Y</sup> is represented by B₂=[1,1,−1,0]<sup>T</sup>.</p></div>
@@ -347,11 +446,55 @@ export default function Home() {
             <div className="plain-definition"><strong>Step 2 — read the result.</strong><p>The spectrum is {`{1,3,3,4}`}. There are no zero eigenvalues, hence dim ker Δ₁<sup>X,Y</sup>=0=β₁<sup>X,Y</sup>, exactly matching the persistent-homology calculation. In contrast, Δ₁<sup>X,X</sup>=B₁<sup>T</sup>B₁ has spectrum {`{0,1,3,4}`}; its zero mode is the loop before it is filled.</p></div>
             <div className="note"><p><strong>Persistent Hodge theorem.</strong> ker Δ<sub>q</sub><sup>X,Y</sup>≅H<sub>q</sub><sup>X,Y</sup>. The zero-eigenvalue multiplicity recovers the persistent Betti number, while changes in the positive eigenvalues describe geometry that a barcode does not contain.</p></div>
             <div className="comparison-table"><div className="comparison-head"><span>Operator</span><span>Acts on</span><span>What its kernel records</span><span>What the positive spectrum adds</span></div><div><strong>Graph L₀</strong><span>vertex signals</span><span>connected components H₀</span><span>connectivity and spectral gap</span></div><div><strong>Hodge L<sub>k</sub></strong><span>k-simplex signals</span><span>H<sub>k</sub>(K)</span><span>lower and upper adjacency geometry</span></div><div><strong>Sheaf L<sub>F</sub></strong><span>stalk-valued signals</span><span>consistent global sections</span><span>restriction-aware disagreement energy</span></div><div><strong>Persistent Δ<sub>q</sub><sup>X,Y</sup></strong><span>q-chains across X⊆Y</span><span>H<sub>q</sub><sup>X,Y</sup></span><span>spectral change across scales</span></div></div>
+
+            <button
+              className={`usage-toggle ${openUsage.persistent ? 'is-open' : ''}`}
+              onClick={() => toggleUsage('persistent')}
+              aria-expanded={openUsage.persistent}
+            >
+              <BookOpen size={15} />
+              <span>Published Usage &amp; Research Motivation</span>
+              <ChevronDown size={14} className="chevron" />
+            </button>
+
+            {openUsage.persistent && (
+              <div className="usage-panel">
+                <span className="usage-badge">Why this operator</span>
+                <h4>Unifying Persistent Homology with Continuous Spectral Geometry</h4>
+                <p>
+                  <strong>Why not just standard persistence barcodes:</strong> Classical persistent homology only outputs topological barcodes (birth and death intervals). While barcodes tell you <em>whether</em> a topological void persists across an inclusion <code>X ⊆ Y</code>, they completely discard metric shape, volume scaling, boundary tension, and continuous geometric deformation across the filtration.
+                </p>
+                <p>
+                  The <strong>Persistent Laplacian <code>Δ_q^{'{X,Y}'}</code></strong> bridges topology and geometry simultaneously:
+                  by the Persistent Hodge Theorem, its harmonic zero modes satisfy <code>ker Δ_q^{'{X,Y}'} ≅ H_q^{'{X,Y}'}</code> (exactly preserving the persistent Betti number <code>β_q^{'{X,Y}'}</code>), while its <strong>positive spectrum (<code>λ &gt; 0</code>)</strong> provides a rich, continuous, and differentiable descriptor of structural deformation that barcodes cannot express.
+                </p>
+                <div className="usage-papers-grid">
+                  <div className="usage-paper-card">
+                    <div className="usage-paper-header">
+                      <span className="usage-paper-title">Persistent Homology of Complex Networks</span>
+                      <span className="usage-paper-venue">J. Stat. Mech. 2009</span>
+                    </div>
+                    <p className="usage-paper-desc">
+                      Investigated persistent topological invariants and clique/neighborhood complex spectra in random, modular, and scale-free networks. Proved that persistent generators reveal topological robustness against node/edge removal, while transient eigenvalues detect structural deficiencies and local connectivity noise.
+                    </p>
+                  </div>
+                  <div className="usage-paper-card">
+                    <div className="usage-paper-header">
+                      <span className="usage-paper-title">Persistent Topological Laplacians: A Survey</span>
+                      <span className="usage-paper-venue">MDPI Mathematics 2025</span>
+                    </div>
+                    <p className="usage-paper-desc">
+                      Established persistent spectral theory (Persistent Hodge Laplacian, Persistent Dirac). Demonstrated that the non-zero eigenvalues of persistent Laplacians significantly outperform classical persistence barcodes in predicting protein-ligand binding affinities and mutation free energy changes in drug discovery.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </article>
       </section>
 
-      <section className="sources"><div><p className="kicker">SOURCES ONE CONSISTENT NOTATION</p><h2>Reading map</h2><p>The narrative follows Chapters 1–4 of Dey and Wang. The accompanying papers supply computational practice, network examples, simplicial learning, sheaf connections, and persistent Laplacians. Oriented matrices use real coefficients; the persistence-reduction example uses 𝔽₂.</p></div><ol><li><span>BOOK</span><strong>Dey & Wang</strong><p><cite>Computational Topology for Data Analysis</cite>, Chapters 1–4.</p></li><li><span>2017</span><strong>Otter et al.</strong><p><cite>A roadmap for the computation of persistent homology</cite>.</p></li><li><span>2009</span><strong>Horak et al.</strong><p><cite>Persistent Homology of Complex Networks</cite>.</p></li><li><span>2022</span><strong>Goh et al.</strong><p><cite>Simplicial Attention Networks</cite>, Hodge-Laplacian background.</p></li><li><span>2022</span><strong>Barbero et al.</strong><p><cite>Sheaf Neural Networks with Connection Laplacians</cite>.</p></li><li><span>2025</span><strong>Wei & Wei</strong><p><cite>Persistent Topological Laplacians — A Survey</cite>.</p></li></ol></section>
+      {/* <section className="sources"><div><p className="kicker">SOURCES ONE CONSISTENT NOTATION</p><h2>Reading map</h2><p>The narrative follows Chapters 1-4 of Dey and Wang. The accompanying papers supply computational practice, network examples, simplicial learning, sheaf connections, and persistent Laplacians. Oriented matrices use real coefficients; the persistence-reduction example uses 𝔽₂.</p></div><ol><li><span>BOOK</span><strong>Dey &amp; Wang</strong><p><cite>Computational Topology for Data Analysis</cite>, Chapters 1–4.</p></li><li><span>2020</span><strong>Ebli et al.</strong><p><cite>Simplicial Neural Networks</cite>, NeurIPS Workshop.</p></li><li><span>2009</span><strong>Horak et al.</strong><p><cite>Persistent Homology of Complex Networks</cite>, J. Stat. Mech.</p></li><li><span>2022</span><strong>Goh et al.</strong><p><cite>Simplicial Attention Networks</cite>, ICLR Workshop.</p></li><li><span>2022</span><strong>Barbero et al.</strong><p><cite>Sheaf Neural Networks with Connection Laplacians</cite>, ICML Workshop.</p></li><li><span>2025</span><strong>Wei &amp; Wei</strong><p><cite>Persistent Topological Laplacians — A Survey</cite>, MDPI Mathematics.</p></li></ol></section> */}
       <footer><a href="#top">Back to top ↑</a></footer>
     </main>
   );
